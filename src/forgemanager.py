@@ -47,7 +47,7 @@ METRICS_PORT = int(os.environ.get("METRICS_PORT", 8000))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 START_AS_NON_PRODUCING = os.environ.get("START_AS_NON_PRODUCING", "true").lower() in (
     "true",
-    "1", 
+    "1",
     "yes",
 )
 
@@ -72,7 +72,7 @@ CARDANO_NODE_PROCESS_NAME = os.environ.get("CARDANO_NODE_PROCESS_NAME", "cardano
 # -----------------------------
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper()),
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s",
 )
 logger = logging.getLogger("cardano-forge-manager")
 
@@ -80,40 +80,30 @@ logger = logging.getLogger("cardano-forge-manager")
 # Prometheus Metrics
 # -----------------------------
 forging_enabled = Gauge(
-    'cardano_forging_enabled', 
-    'Whether this pod is actively forging blocks', 
-    ['pod']
+    "cardano_forging_enabled", "Whether this pod is actively forging blocks", ["pod"]
 )
 leader_status = Gauge(
-    'cardano_leader_status', 
-    'Whether this pod is the elected leader', 
-    ['pod']
+    "cardano_leader_status", "Whether this pod is the elected leader", ["pod"]
 )
 leadership_changes_total = Counter(
-    'cardano_leadership_changes_total', 
-    'Total number of leadership transitions'
+    "cardano_leadership_changes_total", "Total number of leadership transitions"
 )
 sighup_signals_total = Counter(
-    'cardano_sighup_signals_total', 
-    'Total number of SIGHUP signals sent to cardano-node',
-    ['reason']
+    "cardano_sighup_signals_total",
+    "Total number of SIGHUP signals sent to cardano-node",
+    ["reason"],
 )
 credential_operations_total = Counter(
-    'cardano_credential_operations_total',
-    'Total number of credential file operations',
-    ['operation', 'file']
+    "cardano_credential_operations_total",
+    "Total number of credential file operations",
+    ["operation", "file"],
 )
 info_metric = Info(
-    'cardano_forge_manager_info',
-    'Information about the forge manager instance'
+    "cardano_forge_manager_info", "Information about the forge manager instance"
 )
 
 # Initialize info metric
-info_metric.info({
-    'pod_name': POD_NAME,
-    'namespace': NAMESPACE,
-    'version': '1.0.0'
-})
+info_metric.info({"pod_name": POD_NAME, "namespace": NAMESPACE, "version": "1.0.0"})
 
 # -----------------------------
 # Kubernetes Client Setup
@@ -141,42 +131,54 @@ startup_credentials_provisioned = False  # Track if startup credentials are prov
 # Process Management Functions
 # -----------------------------
 
+
 def discover_cardano_node_pid() -> Optional[int]:
     """Discover the cardano-node process PID."""
     try:
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            if proc.info['name'] == CARDANO_NODE_PROCESS_NAME:
-                logger.debug(f"Found {CARDANO_NODE_PROCESS_NAME} process with PID {proc.info['pid']}")
-                return proc.info['pid']
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            if proc.info["name"] == CARDANO_NODE_PROCESS_NAME:
+                logger.debug(
+                    f"Found {CARDANO_NODE_PROCESS_NAME} process with PID {proc.info['pid']}"
+                )
+                return proc.info["pid"]
             # Also check command line for cardano-node
-            if proc.info['cmdline'] and any(CARDANO_NODE_PROCESS_NAME in arg for arg in proc.info['cmdline']):
-                logger.debug(f"Found {CARDANO_NODE_PROCESS_NAME} in cmdline with PID {proc.info['pid']}")
-                return proc.info['pid']
+            if proc.info["cmdline"] and any(
+                CARDANO_NODE_PROCESS_NAME in arg for arg in proc.info["cmdline"]
+            ):
+                logger.debug(
+                    f"Found {CARDANO_NODE_PROCESS_NAME} in cmdline with PID {proc.info['pid']}"
+                )
+                return proc.info["pid"]
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
         logger.warning(f"Error discovering cardano-node process: {e}")
     except Exception as e:
         logger.error(f"Unexpected error discovering cardano-node process: {e}")
     return None
 
+
 def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
     """Send SIGHUP signal to cardano-node process."""
     global cardano_node_pid
-    
+
     # Refresh PID if not cached or process doesn't exist
     if cardano_node_pid is None or not psutil.pid_exists(cardano_node_pid):
         cardano_node_pid = discover_cardano_node_pid()
-        
+
     if cardano_node_pid is None:
         logger.error("Cannot find cardano-node process - unable to send SIGHUP")
         return False
-        
+
     try:
         os.kill(cardano_node_pid, signal.SIGHUP)
         sighup_signals_total.labels(reason=reason).inc()
-        logger.info(f"Sent SIGHUP to cardano-node (PID {cardano_node_pid}) - reason: {reason}")
+        logger.info(
+            f"Sent SIGHUP to cardano-node (PID {cardano_node_pid}) - reason: {reason}"
+        )
         return True
     except ProcessLookupError:
-        logger.warning(f"cardano-node process (PID {cardano_node_pid}) not found - refreshing PID cache")
+        logger.warning(
+            f"cardano-node process (PID {cardano_node_pid}) not found - refreshing PID cache"
+        )
         cardano_node_pid = None  # Clear cached PID
         return False
     except PermissionError:
@@ -186,17 +188,18 @@ def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
         logger.error(f"Unexpected error sending SIGHUP to PID {cardano_node_pid}: {e}")
         return False
 
+
 def is_node_in_startup_phase() -> bool:
     """Detect if cardano-node is in startup phase vs running normally."""
     global node_startup_phase, cardano_node_pid
-    
+
     # If socket doesn't exist, node is definitely in startup
     if not os.path.exists(NODE_SOCKET):
         if not node_startup_phase:
             logger.info("Node socket disappeared - node entering startup/restart phase")
             node_startup_phase = True
         return True
-    
+
     # If we were in startup phase and socket now exists, check if process is stable
     if node_startup_phase:
         # Verify the process exists and socket is working
@@ -205,29 +208,32 @@ def is_node_in_startup_phase() -> bool:
             # Additional stability check - socket should be a valid socket
             try:
                 if stat.S_ISSOCK(os.stat(NODE_SOCKET).st_mode):
-                    logger.info("Node startup phase complete - socket is ready and stable")
+                    logger.info(
+                        "Node startup phase complete - socket is ready and stable"
+                    )
                     node_startup_phase = False
                     cardano_node_pid = current_pid  # Cache the stable PID
                     return False
             except Exception as e:
                 logger.debug(f"Socket stability check failed: {e}")
                 return True
-    
+
     return node_startup_phase
+
 
 def provision_startup_credentials() -> bool:
     """Provision credentials needed for node startup, regardless of leadership."""
     global startup_credentials_provisioned
-    
+
     logger.info("Provisioning credentials for node startup")
-    
+
     # Define credential files
     credential_files = [
-        (SOURCE_KES_KEY, TARGET_KES_KEY, 'kes'),
-        (SOURCE_VRF_KEY, TARGET_VRF_KEY, 'vrf'),
-        (SOURCE_OP_CERT, TARGET_OP_CERT, 'opcert')
+        (SOURCE_KES_KEY, TARGET_KES_KEY, "kes"),
+        (SOURCE_VRF_KEY, TARGET_VRF_KEY, "vrf"),
+        (SOURCE_OP_CERT, TARGET_OP_CERT, "opcert"),
     ]
-    
+
     success = True
     for src, dest, file_type in credential_files:
         if not os.path.exists(dest):
@@ -235,18 +241,20 @@ def provision_startup_credentials() -> bool:
                 success = False
         else:
             logger.debug(f"Startup credential {dest} already exists")
-    
+
     if success:
         startup_credentials_provisioned = True
         logger.info("Startup credentials provisioned successfully")
     else:
         logger.error("Failed to provision all startup credentials")
-    
+
     return success
+
 
 # -----------------------------
 # Helper Functions
 # -----------------------------
+
 
 def update_leader_status(is_leader: bool):
     """Update CardanoLeader CRD status with current leadership state."""
@@ -266,9 +274,12 @@ def update_leader_status(is_leader: bool):
             name=CRD_NAME,
             body=status_body,
         )
-        logger.info(f"CRD status updated: leader={POD_NAME if is_leader else 'none'}, forgingEnabled={is_leader}")
+        logger.info(
+            f"CRD status updated: leader={POD_NAME if is_leader else 'none'}, forgingEnabled={is_leader}"
+        )
     except ApiException as e:
         logger.error(f"Failed to update CRD status: {e}")
+
 
 def update_metrics(is_leader: bool):
     """Update Prometheus metrics with current state."""
@@ -276,35 +287,37 @@ def update_metrics(is_leader: bool):
     forging_enabled.labels(pod=POD_NAME).set(1 if is_leader else 0)
     logger.debug(f"Metrics updated: leader={is_leader}, forging={is_leader}")
 
+
 def copy_secret(src: str, dest: str, file_type: str) -> bool:
     """Copy secret file with proper permissions and logging."""
     if not os.path.exists(src):
         logger.warning(f"Source secret {src} not found")
         return False
-    
+
     try:
         # Ensure target directory exists
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        
+
         # Copy file
         shutil.copy2(src, dest)
-        
+
         # Set restrictive permissions (600)
         os.chmod(dest, stat.S_IRUSR | stat.S_IWUSR)
-        
-        credential_operations_total.labels(operation='copy', file=file_type).inc()
+
+        credential_operations_total.labels(operation="copy", file=file_type).inc()
         logger.info(f"Copied secret {src} -> {dest} with permissions 600")
         return True
     except Exception as e:
         logger.error(f"Failed to copy secret {src} -> {dest}: {e}")
         return False
 
+
 def remove_file(path: str, file_type: str) -> bool:
     """Remove file with logging and metrics."""
     if os.path.exists(path):
         try:
             os.remove(path)
-            credential_operations_total.labels(operation='remove', file=file_type).inc()
+            credential_operations_total.labels(operation="remove", file=file_type).inc()
             logger.info(f"Removed credential file {path}")
             return True
         except Exception as e:
@@ -314,23 +327,26 @@ def remove_file(path: str, file_type: str) -> bool:
         logger.debug(f"File {path} already absent")
         return True
 
+
 def wait_for_socket(timeout: int = None) -> bool:
     """Wait for cardano-node socket to exist before proceeding."""
     if DISABLE_SOCKET_CHECK:
         logger.info("Socket check disabled via DISABLE_SOCKET_CHECK")
         return True
-        
+
     timeout = timeout or SOCKET_WAIT_TIMEOUT
     start_time = time.time()
-    
+
     logger.info(f"Waiting for node socket: {NODE_SOCKET} (timeout: {timeout}s)")
-    
+
     while not os.path.exists(NODE_SOCKET):
         if time.time() - start_time > timeout:
-            logger.warning(f"Timeout waiting for node socket: {NODE_SOCKET} after {timeout}s")
+            logger.warning(
+                f"Timeout waiting for node socket: {NODE_SOCKET} after {timeout}s"
+            )
             return False
         time.sleep(1)
-    
+
     # Additional check that it's actually a socket
     try:
         if stat.S_ISSOCK(os.stat(NODE_SOCKET).st_mode):
@@ -343,15 +359,16 @@ def wait_for_socket(timeout: int = None) -> bool:
         logger.warning(f"Could not verify socket {NODE_SOCKET}: {e}")
         return True  # Assume it's valid to avoid blocking
 
+
 def ensure_secrets(is_leader: bool, send_sighup: bool = True) -> bool:
     """Ensure credential state matches leadership status."""
     credentials_changed = False
-    
+
     # Define credential files using direct environment variables
     credential_files = [
-        (SOURCE_KES_KEY, TARGET_KES_KEY, 'kes'),
-        (SOURCE_VRF_KEY, TARGET_VRF_KEY, 'vrf'),
-        (SOURCE_OP_CERT, TARGET_OP_CERT, 'opcert')
+        (SOURCE_KES_KEY, TARGET_KES_KEY, "kes"),
+        (SOURCE_VRF_KEY, TARGET_VRF_KEY, "vrf"),
+        (SOURCE_OP_CERT, TARGET_OP_CERT, "opcert"),
     ]
     if is_leader:
         logger.info("Ensuring credentials are present for leader")
@@ -365,50 +382,54 @@ def ensure_secrets(is_leader: bool, send_sighup: bool = True) -> bool:
             if os.path.exists(dest):
                 if remove_file(dest, file_type):
                     credentials_changed = True
-    
+
     # Send SIGHUP if credentials changed
     if credentials_changed and send_sighup:
         reason = "enable_forging" if is_leader else "disable_forging"
         send_sighup_to_cardano_node(reason)
-    
+
     return credentials_changed
+
 
 def files_identical(file1: str, file2: str) -> bool:
     """Check if two files are identical."""
     try:
         if not (os.path.exists(file1) and os.path.exists(file2)):
             return False
-        
+
         stat1 = os.stat(file1)
         stat2 = os.stat(file2)
-        
+
         # Quick size check first
         if stat1.st_size != stat2.st_size:
             return False
-        
+
         # Compare modification times
         if abs(stat1.st_mtime - stat2.st_mtime) < 1:  # Within 1 second
             return True
-            
+
         # Fallback to content comparison for small files
         if stat1.st_size < 1024 * 1024:  # 1MB
-            with open(file1, 'rb') as f1, open(file2, 'rb') as f2:
+            with open(file1, "rb") as f1, open(file2, "rb") as f2:
                 return f1.read() == f2.read()
-                
+
         return False
     except Exception:
         return False
 
+
 def startup_cleanup():
     """Clean up orphaned credentials on startup if not current lease holder."""
     logger.info("Performing startup credential cleanup")
-    
+
     # Check current lease holder
     lease = get_lease()
     if lease:
         holder = getattr(lease.spec, "holder_identity", "")
         if holder and holder != POD_NAME:
-            logger.info(f"Current lease holder is {holder}, cleaning up any orphaned credentials")
+            logger.info(
+                f"Current lease holder is {holder}, cleaning up any orphaned credentials"
+            )
             cleanup_performed = ensure_secrets(is_leader=False, send_sighup=False)
             if cleanup_performed:
                 send_sighup_to_cardano_node("startup_cleanup")
@@ -416,13 +437,17 @@ def startup_cleanup():
             else:
                 logger.info("No orphaned credentials found during startup")
         else:
-            logger.info(f"This pod ({POD_NAME}) may be the lease holder or lease is vacant")
+            logger.info(
+                f"This pod ({POD_NAME}) may be the lease holder or lease is vacant"
+            )
     else:
         logger.info("No lease found during startup - assuming clean state")
 
+
 # -----------------------------
-# Lease Functions  
+# Lease Functions
 # -----------------------------
+
 
 def parse_k8s_time(time_str: str) -> datetime:
     """Parse Kubernetes timestamp string to datetime object."""
@@ -441,6 +466,7 @@ def parse_k8s_time(time_str: str) -> datetime:
             logger.warning(f"Could not parse timestamp: {time_str}")
             return datetime.now(timezone.utc)
 
+
 def get_lease():
     """Get current lease object or None if not found."""
     try:
@@ -451,6 +477,7 @@ def get_lease():
         else:
             logger.error(f"Error reading lease: {e}")
             raise
+
 
 def create_lease():
     """Create new lease object."""
@@ -468,7 +495,9 @@ def create_lease():
         ),
     )
     try:
-        created_lease = coord_api.create_namespaced_lease(namespace=NAMESPACE, body=lease)
+        created_lease = coord_api.create_namespaced_lease(
+            namespace=NAMESPACE, body=lease
+        )
         logger.info(f"Created new lease: {LEASE_NAME}")
         return created_lease
     except ApiException as e:
@@ -477,6 +506,7 @@ def create_lease():
             return get_lease()
         raise
 
+
 def patch_lease(lease):
     """Update lease with current timestamp."""
     lease.spec.renew_time = datetime.now(timezone.utc).isoformat()
@@ -484,47 +514,52 @@ def patch_lease(lease):
         name=LEASE_NAME, namespace=NAMESPACE, body=lease
     )
 
+
 def try_acquire_leader() -> bool:
     """Attempt to acquire leadership via lease mechanism."""
     global current_leadership_state
-    
+
     try:
         lease = get_lease()
         now = datetime.now(timezone.utc)
-        
+
         if not lease:
             lease = create_lease()
-            
+
         holder = getattr(lease.spec, "holder_identity", "")
-        lease_duration = int(getattr(lease.spec, "lease_duration_seconds", LEASE_DURATION))
+        lease_duration = int(
+            getattr(lease.spec, "lease_duration_seconds", LEASE_DURATION)
+        )
         renew_time = getattr(lease.spec, "renew_time", None)
-        
+
         # Check if lease is expired
         expired = True
         if renew_time:
             renew_time_dt = parse_k8s_time(renew_time)
             expired = (renew_time_dt + timedelta(seconds=lease_duration)) < now
-            
+
         # Try to acquire if lease is expired, vacant, or we already hold it
         if expired or holder == "" or holder == POD_NAME:
             old_holder = holder
             lease.spec.holder_identity = POD_NAME
             lease.spec.renew_time = now.isoformat()
-            
+
             try:
                 patch_lease(lease)
                 new_leader = True
-                
+
                 # Log leadership transition
                 if old_holder != POD_NAME:
                     leadership_changes_total.inc()
-                    logger.info(f"Leadership acquired by {POD_NAME} (previous: {old_holder or 'vacant'})")
+                    logger.info(
+                        f"Leadership acquired by {POD_NAME} (previous: {old_holder or 'vacant'})"
+                    )
                     current_leadership_state = True
                 else:
                     logger.debug(f"Leadership renewed by {POD_NAME}")
-                    
+
                 return True
-                
+
             except ApiException as e:
                 if e.status == 409:  # Conflict - someone else got it
                     logger.debug(f"Failed to acquire lease due to conflict (409)")
@@ -534,22 +569,24 @@ def try_acquire_leader() -> bool:
                     raise
         else:
             new_leader = False
-            
+
         # Check if we lost leadership
         if current_leadership_state and holder != POD_NAME:
             leadership_changes_total.inc()
             logger.info(f"Leadership lost to {holder}")
             current_leadership_state = False
-            
+
         return holder == POD_NAME
-        
+
     except Exception as e:
         logger.error(f"Error in leader election: {e}")
         return False
 
+
 # -----------------------------
 # Metrics Server
 # -----------------------------
+
 
 def start_metrics_server():
     """Start Prometheus metrics server in background thread."""
@@ -560,80 +597,92 @@ def start_metrics_server():
         logger.error(f"Failed to start metrics server on port {METRICS_PORT}: {e}")
         raise
 
+
 # -----------------------------
 # Main Loop
 # -----------------------------
 
+
 def main():
     """Main application loop."""
-    global node_startup_phase, startup_credentials_provisioned
-    
-    logger.info(f"Starting Cardano Forge Manager for pod {POD_NAME} in namespace {NAMESPACE}")
+    global startup_credentials_provisioned
+
+    logger.info(
+        f"Starting Cardano Forge Manager for pod {POD_NAME} in namespace {NAMESPACE}"
+    )
     logger.info(f"START_AS_NON_PRODUCING mode: {START_AS_NON_PRODUCING}")
-    
+
     # Start metrics server
     start_metrics_server()
-    
+
     # Initialize metrics to 0
     update_metrics(is_leader=False)
-    
+
     # Handle startup phase - provision credentials before node startup
     if START_AS_NON_PRODUCING:
-        logger.info("Node configured to start as non-producing - provisioning startup credentials")
+        logger.info(
+            "Node configured to start as non-producing - provisioning startup credentials"
+        )
         if not provision_startup_credentials():
-            logger.error("Failed to provision startup credentials - node may fail to start")
-    
+            logger.error(
+                "Failed to provision startup credentials - node may fail to start"
+            )
+
     # Wait for node socket on startup
     logger.info("Waiting for cardano-node to be ready...")
     if not wait_for_socket():
         logger.error("Cardano node failed to start within timeout - continuing anyway")
-    
+
     # Check if node startup is complete
-    is_node_in_startup_phase()
-    
+    in_startup = is_node_in_startup_phase()
+
     # Perform startup cleanup only after node is running
-    if not node_startup_phase:
+    if not in_startup:
         startup_cleanup()
-    
+
     logger.info(f"Starting main leadership election loop (interval: {SLEEP_INTERVAL}s)")
-    
+
     try:
         while True:
             try:
                 # Check node startup state
                 in_startup = is_node_in_startup_phase()
-                
+
                 if in_startup:
-                    logger.debug("Node in startup phase - maintaining startup credentials")
+                    logger.debug(
+                        "Node in startup phase - maintaining startup credentials"
+                    )
                     # During startup, ensure credentials exist but don't do leader election
                     if not startup_credentials_provisioned:
                         provision_startup_credentials()
-                    
+
                     # No SIGHUP during startup phase
                     # Sleep and check again
                     time.sleep(SLEEP_INTERVAL)
                     continue
-                
+
                 # Node is running normally - perform leader election
                 if startup_credentials_provisioned:
-                    logger.info("Node startup complete - beginning normal leadership election")
+                    logger.info(
+                        "Node startup complete - beginning normal leadership election"
+                    )
                     startup_credentials_provisioned = False  # Reset flag
                     # Perform delayed startup cleanup now that node is stable
                     startup_cleanup()
-                
+
                 # Try to acquire leadership
                 is_leader = try_acquire_leader()
-                
+
                 # Ensure credential state matches leadership (normal operation)
                 ensure_secrets(is_leader)
-                
+
                 # Update status and metrics
                 update_leader_status(is_leader)
                 update_metrics(is_leader)
-                
+
                 # Sleep until next iteration
                 time.sleep(SLEEP_INTERVAL)
-                
+
             except KeyboardInterrupt:
                 logger.info("Received interrupt signal, shutting down gracefully")
                 break
@@ -641,7 +690,7 @@ def main():
                 logger.error(f"Error in main loop iteration: {e}")
                 # Continue running but sleep a bit longer on errors
                 time.sleep(min(SLEEP_INTERVAL * 2, 30))
-                
+
     except KeyboardInterrupt:
         logger.info("Shutting down gracefully...")
     finally:
@@ -651,17 +700,19 @@ def main():
             ensure_secrets(is_leader=False)
         logger.info("Cardano Forge Manager shutdown complete")
 
+
 def signal_handler(signum, frame):
     """Handle termination signals gracefully."""
     logger.info(f"Received signal {signum}, initiating graceful shutdown")
     # The main loop will handle cleanup via KeyboardInterrupt
     raise KeyboardInterrupt
 
+
 if __name__ == "__main__":
     # Register signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     # Validate required environment variables
     if not POD_NAME:
         logger.error("POD_NAME environment variable is required")
@@ -669,5 +720,5 @@ if __name__ == "__main__":
     if not NAMESPACE:
         logger.error("NAMESPACE environment variable is required")
         exit(1)
-        
+
     main()
