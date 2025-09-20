@@ -45,11 +45,6 @@ LEASE_NAME = os.environ.get("LEASE_NAME", "cardano-node-leader")
 LEASE_DURATION = int(os.environ.get("LEASE_DURATION", 15))  # seconds
 METRICS_PORT = int(os.environ.get("METRICS_PORT", 8000))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-START_AS_NON_PRODUCING = os.environ.get("START_AS_NON_PRODUCING", "true").lower() in (
-    "true",
-    "1",
-    "yes",
-)
 
 # -----------------------------
 # Secrets - Full paths from environment
@@ -610,7 +605,6 @@ def main():
     logger.info(
         f"Starting Cardano Forge Manager for pod {POD_NAME} in namespace {NAMESPACE}"
     )
-    logger.info(f"START_AS_NON_PRODUCING mode: {START_AS_NON_PRODUCING}")
 
     # Start metrics server
     start_metrics_server()
@@ -619,14 +613,8 @@ def main():
     update_metrics(is_leader=False)
 
     # Handle startup phase - provision credentials before node startup
-    if START_AS_NON_PRODUCING:
-        logger.info(
-            "Node configured to start as non-producing - provisioning startup credentials"
-        )
-        if not provision_startup_credentials():
-            logger.error(
-                "Failed to provision startup credentials - node may fail to start"
-            )
+    if not provision_startup_credentials():
+        logger.error("Failed to provision startup credentials - node may fail to start")
 
     # Wait for node socket on startup
     logger.info("Waiting for cardano-node to be ready...")
