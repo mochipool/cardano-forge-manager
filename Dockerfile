@@ -39,4 +39,4 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8000
 
 # Entrypoint: run your script
-ENTRYPOINT ["python", "-m", "src.sidecar"]
+ENTRYPOINT ["python", "-m", "forgemanager"]
