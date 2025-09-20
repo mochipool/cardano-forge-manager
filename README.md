@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/cardano/forge-manager)](https://hub.docker.com/r/cardano/forge-manager)
-[![Build Status](https://github.com/cardano/forge-manager/workflows/Build/badge.svg)](https://github.com/cardano/forge-manager/actions)
+[![Build Status](https://github.com/mochipool/cardano-forge-manager/workflows/Build/badge.svg)](https://github.com/mochipool/cardano-forge-manager/actions)
 [![Python](https://img.shields.io/badge/Python-3.13+-yellow.svg)](https://python.org)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.25+-blue.svg)](https://kubernetes.io)
 

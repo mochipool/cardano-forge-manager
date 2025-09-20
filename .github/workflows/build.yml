@@ -4,8 +4,22 @@ on:
   push:
     branches: [ main, develop ]
     tags: [ 'v*' ]
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - 'dummy.yaml'
+      - 'makefile'
+      - '.github/workflows/**'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - 'dummy.yaml'
+      - 'makefile'
+      - '.github/workflows/**'
   workflow_dispatch:
     inputs:
       push_to_registry:
@@ -16,6 +30,11 @@ on:
         options:
           - 'true'
           - 'false'
+      force_build:
+        description: 'Force build even if no functional changes'
+        required: false
+        default: 'false'
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
@@ -59,10 +78,63 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      should-build: ${{ steps.cache-check.outputs.should-build }}
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Needed for change detection
+
+      - name: Check for functional changes
+        id: cache-check
+        run: |
+          echo "Checking for functional changes..."
+          
+          # Always build on manual dispatch with force_build
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force_build }}" = "true" ]; then
+            echo "should-build=true" >> $GITHUB_OUTPUT
+            echo "Force build requested via manual dispatch"
+            exit 0
+          fi
+          
+          # Always build on tags
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "should-build=true" >> $GITHUB_OUTPUT
+            echo "Building for tag: ${{ github.ref }}"
+            exit 0
+          fi
+          
+          # For push events, check if functional files changed
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            echo "Checking changed files between ${{ github.event.before }} and ${{ github.sha }}"
+            
+            # Get list of changed files
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+            echo "Changed files:"
+            echo "$CHANGED_FILES"
+            
+            # Check if any functional files changed
+            FUNCTIONAL_CHANGES=$(echo "$CHANGED_FILES" | grep -E '^(src/|Dockerfile|requirements\.txt|makefile|dummy\.yaml|\.github/workflows/)' || true)
+            
+            if [ -z "$FUNCTIONAL_CHANGES" ]; then
+              echo "should-build=false" >> $GITHUB_OUTPUT
+              echo "No functional changes detected - skipping build"
+              echo "Only documentation/non-functional files changed:"
+              echo "$CHANGED_FILES"
+              exit 0
+            else
+              echo "should-build=true" >> $GITHUB_OUTPUT
+              echo "Functional changes detected:"
+              echo "$FUNCTIONAL_CHANGES"
+            fi
+          else
+            # Default to build for PRs and other cases
+            echo "should-build=true" >> $GITHUB_OUTPUT
+            echo "Building for event: ${{ github.event_name }}"
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -109,6 +181,8 @@ jobs:
             org.opencontainers.image.licenses=MIT
 
       - name: Build container image
+        id: build
+        if: steps.cache-check.outputs.should-build == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -123,8 +197,15 @@ jobs:
             VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
             REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
 
+      - name: Build skipped notification
+        if: steps.cache-check.outputs.should-build == 'false'
+        run: |
+          echo "::notice::Container build skipped - no functional changes detected"
+          echo "To force a build, use the 'workflow_dispatch' event with 'force_build' enabled"
+          echo "Changed files were documentation or non-functional only"
+
       - name: Generate SBOM
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.cache-check.outputs.should-build == 'true' && steps.build.conclusion == 'success'
         continue-on-error: true
         run: |
           echo "Generating SBOM for built image"
@@ -139,7 +220,7 @@ jobs:
           }
 
       - name: Upload SBOM artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.cache-check.outputs.should-build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ github.sha }}
@@ -152,7 +233,7 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && needs.build.outputs.should-build == 'true'
     permissions:
       contents: read
       packages: read
@@ -251,7 +332,7 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     needs: [test, build, security]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.should-build == 'true'
     permissions:
       contents: write
       packages: read
@@ -295,7 +376,7 @@ jobs:
     name: Update Deployment Files
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.should-build == 'true'
     
     steps:
       - name: Checkout code
