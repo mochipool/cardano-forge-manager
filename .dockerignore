@@ -1,0 +1,84 @@
+# Git and version control
+.git/
+.gitignore
+.github/
+
+# Documentation
+README.md
+WARP.md
+cardano-k8s-dynamic-forging-requirements.md
+
+# Development files
+makefile
+.vscode/
+.idea/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing and coverage
+.coverage
+.pytest_cache/
+.tox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+
+# Local configuration
+.env
+.env.local
+
+# IDE files
+*.sublime-project
+*.sublime-workspace
+
+# Kubernetes test files (not needed in container)
+dummy.yaml
+
+.venv/
+dist/
+__pycache__/
+*.pyc
+*.pyo
