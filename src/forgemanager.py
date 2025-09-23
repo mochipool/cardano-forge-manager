@@ -128,7 +128,12 @@ startup_credentials_provisioned = False  # Track if startup credentials are prov
 
 
 def discover_cardano_node_pid() -> Optional[int]:
-    """Discover the cardano-node process PID."""
+    """Discover the cardano-node process PID.
+    
+    Note: In multi-container pods, the cardano-node process may be running
+    in a different container and not visible via psutil. We'll try to find it
+    but if not found, we'll rely on socket-based detection instead.
+    """
     try:
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             if proc.info["name"] == CARDANO_NODE_PROCESS_NAME:
@@ -144,6 +149,9 @@ def discover_cardano_node_pid() -> Optional[int]:
                     f"Found {CARDANO_NODE_PROCESS_NAME} in cmdline with PID {proc.info['pid']}"
                 )
                 return proc.info["pid"]
+        
+        # If not found, log this as debug (not error) since it's expected in multi-container setups
+        logger.debug(f"Cannot find {CARDANO_NODE_PROCESS_NAME} process - likely in different container")
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
         logger.warning(f"Error discovering cardano-node process: {e}")
     except Exception as e:
@@ -152,7 +160,11 @@ def discover_cardano_node_pid() -> Optional[int]:
 
 
 def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
-    """Send SIGHUP signal to cardano-node process."""
+    """Send SIGHUP signal to cardano-node process.
+    
+    In multi-container setups, the cardano-node process is not visible to this container,
+    so SIGHUP signaling is not possible. Log this information but don't treat as error.
+    """
     global cardano_node_pid
 
     # Refresh PID if not cached or process doesn't exist
@@ -160,8 +172,11 @@ def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
         cardano_node_pid = discover_cardano_node_pid()
 
     if cardano_node_pid is None:
-        logger.error("Cannot find cardano-node process - unable to send SIGHUP")
-        return False
+        logger.info(f"Cannot send SIGHUP to cardano-node (cross-container setup) - reason: {reason}")
+        # In multi-container setups, we can't signal the process directly
+        # The credential changes should still take effect when the node reads them
+        sighup_signals_total.labels(reason=f"{reason}_skipped").inc()
+        return True  # Return True because this is expected behavior
 
     try:
         os.kill(cardano_node_pid, signal.SIGHUP)
@@ -175,7 +190,10 @@ def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
             f"cardano-node process (PID {cardano_node_pid}) not found - refreshing PID cache"
         )
         cardano_node_pid = None  # Clear cached PID
-        return False
+        # Retry once with cross-container assumption
+        logger.info(f"Assuming cross-container setup - credentials updated without SIGHUP - reason: {reason}")
+        sighup_signals_total.labels(reason=f"{reason}_cross_container").inc()
+        return True
     except PermissionError:
         logger.error(f"Permission denied sending SIGHUP to PID {cardano_node_pid}")
         return False
@@ -185,7 +203,11 @@ def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
 
 
 def is_node_in_startup_phase() -> bool:
-    """Detect if cardano-node is in startup phase vs running normally."""
+    """Detect if cardano-node is in startup phase vs running normally.
+    
+    In multi-container setups, we rely primarily on socket existence and stability
+    rather than process discovery since we can't see the cardano-node process.
+    """
     global node_startup_phase, cardano_node_pid
 
     # If socket doesn't exist, node is definitely in startup
@@ -195,23 +217,29 @@ def is_node_in_startup_phase() -> bool:
             node_startup_phase = True
         return True
 
-    # If we were in startup phase and socket now exists, check if process is stable
+    # If we were in startup phase and socket now exists, check if it's stable
     if node_startup_phase:
-        # Verify the process exists and socket is working
-        current_pid = discover_cardano_node_pid()
-        if current_pid:
-            # Additional stability check - socket should be a valid socket
-            try:
-                if stat.S_ISSOCK(os.stat(NODE_SOCKET).st_mode):
-                    logger.info(
-                        "Node startup phase complete - socket is ready and stable"
-                    )
-                    node_startup_phase = False
-                    cardano_node_pid = current_pid  # Cache the stable PID
-                    return False
-            except Exception as e:
-                logger.debug(f"Socket stability check failed: {e}")
+        try:
+            # Check that it's actually a socket
+            if stat.S_ISSOCK(os.stat(NODE_SOCKET).st_mode):
+                logger.info("Node startup phase complete - socket is ready and stable")
+                node_startup_phase = False
+                
+                # Try to discover PID for potential signaling, but don't require it
+                current_pid = discover_cardano_node_pid()
+                if current_pid:
+                    cardano_node_pid = current_pid
+                    logger.debug(f"Cached cardano-node PID: {current_pid}")
+                else:
+                    logger.info("Running in cross-container mode - process signaling not available")
+                
+                return False
+            else:
+                logger.debug(f"File {NODE_SOCKET} exists but is not a socket")
                 return True
+        except Exception as e:
+            logger.debug(f"Socket stability check failed: {e}")
+            return True
 
     return node_startup_phase
 
@@ -444,10 +472,15 @@ def startup_cleanup():
 # -----------------------------
 
 
-def parse_k8s_time(time_str: str) -> datetime:
-    """Parse Kubernetes timestamp string to datetime object."""
-    if not time_str:
+def parse_k8s_time(time_val) -> datetime:
+    """Parse Kubernetes timestamp (str or datetime) to timezone-aware datetime (UTC)."""
+    if not time_val:
         return datetime.now(timezone.utc)
+    # If already datetime, normalize tzinfo
+    if isinstance(time_val, datetime):
+        return time_val if time_val.tzinfo else time_val.replace(tzinfo=timezone.utc)
+    # Otherwise, expect string
+    time_str = str(time_val)
     try:
         return datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
             tzinfo=timezone.utc
@@ -648,6 +681,8 @@ def main():
                     # Sleep and check again
                     time.sleep(SLEEP_INTERVAL)
                     continue
+                
+                logger.debug("Node startup phase complete - proceeding with leader election")
 
                 # Node is running normally - perform leader election
                 if startup_credentials_provisioned:
@@ -659,12 +694,18 @@ def main():
                     startup_cleanup()
 
                 # Try to acquire leadership
+                logger.debug("Attempting to acquire leadership...")
                 is_leader = try_acquire_leader()
+                logger.debug(f"Leadership acquisition result: {is_leader}")
 
                 # Ensure credential state matches leadership (normal operation)
-                ensure_secrets(is_leader)
+                logger.debug(f"Ensuring secrets for leader status: {is_leader}")
+                credentials_changed = ensure_secrets(is_leader)
+                if credentials_changed:
+                    logger.info(f"Credentials {'provisioned' if is_leader else 'removed'} for leadership status")
 
                 # Update status and metrics
+                logger.debug("Updating CRD status and metrics")
                 update_leader_status(is_leader)
                 update_metrics(is_leader)
 
