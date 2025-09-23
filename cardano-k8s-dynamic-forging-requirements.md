@@ -109,9 +109,29 @@ This document describes the requirements, architecture, and edge cases for such 
 - **Problem:** Cardano-node requires credential files to exist at startup, even when starting with `--start-as-non-producing-node`. Without these files, node fails to start creating restart loops.
 - **Mitigation:**
   - Sidecar must provision credentials during node startup phase regardless of leadership status.
-  - Once node is running, normal leader election and credential management applies.
-  - Monitor node process state to detect startup vs running phases.
-  - Use `START_AS_NON_PRODUCING` environment variable to control node startup behavior.
+  - Detect startup phase by monitoring socket file existence and stability.
+  - During startup phase: provision credentials, skip leader election, don't send SIGHUP signals.
+  - After startup phase completes (socket is stable): transition to normal leadership election.
+  - Perform delayed startup cleanup to remove orphaned credentials if not the current leader.
+  - Use startup credentials flag to track the transition between startup and normal operation phases.
+  - Ensure credentials are always available during the critical node initialization period.
+
+### 10. Cross-container process discovery failure
+- **Problem:** In multi-container pods without `shareProcessNamespace: true`, the sidecar cannot discover the cardano-node process PID, preventing SIGHUP signaling. This can lead to infinite boot loops when the sidecar waits indefinitely for process discovery.
+- **Mitigation:**
+  - Gracefully handle process discovery failures by logging them as debug/info rather than errors.
+  - Continue operation without SIGHUP signaling - credential file changes alone should trigger node behavior updates.
+  - Use socket-based readiness detection as the primary mechanism instead of process discovery.
+  - Add metrics to track when SIGHUP signals are skipped due to cross-container setup.
+  - Document that `shareProcessNamespace: true` is recommended but not required.
+
+### 11. Leadership forfeiture race conditions
+- **Problem:** When a pod's cardano-node dies (socket disappears), the pod should forfeit leadership immediately. However, another pod might have already acquired leadership by the time the first pod detects the failure, creating a race condition where the CRD status could be incorrectly overwritten.
+- **Mitigation:**
+  - Before updating CRD status during leadership forfeiture, check if this pod is still recorded as the leader.
+  - If another pod has already become leader, skip CRD updates but still clean up local credentials and metrics.
+  - Log the race condition detection to help with debugging.
+  - Ensure local state is always cleaned up regardless of CRD update results.
 
 ---
 
@@ -127,7 +147,7 @@ This document describes the requirements, architecture, and edge cases for such 
 
 ---
 
-## Sequence Diagram — Leadership Transition
+## Sequence Diagram — Complete Leadership Lifecycle with Edge Cases
 
 ```mermaid
 sequenceDiagram
@@ -138,22 +158,113 @@ sequenceDiagram
     participant Sidecar-New as Sidecar (New Leader)
     participant Node-New as Cardano Node (New)
 
+    Note over Sidecar-New, Node-New: New Pod Startup Phase
+    
+    Sidecar-New->>Node-New: Provision startup credentials (regardless of leadership)
+    Note over Sidecar-New: Skip leader election during startup
+    
+    Node-New->>Node-New: Start with credentials present
+    Node-New->>Node-New: Create /ipc/node.socket when ready
+    
+    Sidecar-New->>Sidecar-New: Detect socket exists and is stable
+    Sidecar-New->>Sidecar-New: Exit startup phase, begin leadership election
+    
     Note over Sidecar-Old, Node-Old: Old leader currently forging
-
-    Sidecar-Old->>Node-Old: Remove forging keys
-    Sidecar-Old->>Node-Old: Send SIGHUP (disable forging)
-    Sidecar-Old->>CRD: Update status: forgingEnabled=false
-    Sidecar-Old->>Lease: Relinquish leadership
-
-    Note over Node-New: Node booting, waiting for /ipc/node.socket
-
-    Sidecar-New->>Node-New: Wait for /ipc/node.socket (or readinessProbe)
+    
+    alt Node failure detected (socket disappears)
+        Sidecar-Old->>Sidecar-Old: Detect socket missing
+        Sidecar-Old->>CRD: Check current leader status
+        
+        alt Race condition: Still recorded as leader
+            Sidecar-Old->>Node-Old: Remove forging keys
+            Sidecar-Old->>Node-Old: Send SIGHUP (disable forging) OR skip if cross-container
+            Sidecar-Old->>CRD: Update status: forgingEnabled=false, leaderPod=""
+            Sidecar-Old->>Sidecar-Old: Forfeit leadership immediately
+        else Race condition: Another pod already leader
+            Sidecar-Old->>Node-Old: Remove forging keys (local cleanup)
+            Sidecar-Old->>Sidecar-Old: Update metrics only, skip CRD update
+            Note over Sidecar-Old: Log race condition detected
+        end
+    end
+    
     Sidecar-New->>Lease: Acquire leadership
-    Sidecar-New->>Node-New: Write forging keys
-    Sidecar-New->>Node-New: Send SIGHUP (enable forging)
+    Sidecar-New->>Sidecar-New: Perform delayed startup cleanup
+    Sidecar-New->>Node-New: Ensure forging keys present
+    
+    alt SIGHUP Available (shareProcessNamespace: true)
+        Sidecar-New->>Node-New: Send SIGHUP (enable forging)
+    else Cross-container setup
+        Note over Sidecar-New: Skip SIGHUP - credentials alone trigger forging
+        Sidecar-New->>Sidecar-New: Log cross-container operation
+    end
+    
     Sidecar-New->>CRD: Update status: leaderPod=pod-name, forgingEnabled=true
 
-    Note over Sidecar-New, Node-New: New leader now forging, CRD updated
+    Note over Sidecar-New, Node-New: New leader now forging, handles both single and cross-container setups
+```
+
+## Finite State Machine — Pod State Management
+
+```mermaid
+stateDiagram-v2
+    [*] --> StartupPhase : Pod starts
+    
+    state StartupPhase {
+        [*] --> ProvisioningCredentials
+        ProvisioningCredentials --> WaitingForSocket : Credentials provisioned
+        WaitingForSocket --> SocketStable : Socket detected and stable
+        SocketStable --> [*] : Ready for leadership
+    }
+    
+    StartupPhase --> LeadershipElection : Node ready, startup complete
+    
+    state LeadershipElection {
+        [*] --> AttemptingAcquisition
+        AttemptingAcquisition --> AcquiredLease : Lease acquired
+        AttemptingAcquisition --> LeaseUnavailable : Another pod holds lease
+        LeaseUnavailable --> AttemptingAcquisition : Retry after interval
+    }
+    
+    LeadershipElection --> LeaderActive : Became leader
+    LeadershipElection --> NonLeader : Another pod is leader
+    
+    state LeaderActive {
+        [*] --> ConfiguringCredentials : Write forging keys
+        ConfiguringCredentials --> SendingSIGHUP : SIGHUP available
+        ConfiguringCredentials --> SkippingSIGHUP : Cross-container setup
+        SendingSIGHUP --> ForgingEnabled
+        SkippingSIGHUP --> ForgingEnabled
+        ForgingEnabled --> RenewingLease : Maintain leadership
+        RenewingLease --> ForgingEnabled : Lease renewed
+        RenewingLease --> LostLease : Lease expired/taken
+    }
+    
+    state NonLeader {
+        [*] --> RemovingCredentials : Ensure no forging keys
+        RemovingCredentials --> SendingSIGHUP_Disable : SIGHUP available
+        RemovingCredentials --> SkippingSIGHUP_Disable : Cross-container setup
+        SendingSIGHUP_Disable --> StandbyMode
+        SkippingSIGHUP_Disable --> StandbyMode
+        StandbyMode --> AttemptingLeadership : Try to acquire leadership
+        AttemptingLeadership --> StandbyMode : Leadership unavailable
+    }
+    
+    LeaderActive --> NodeFailure : Socket disappears
+    NonLeader --> NodeFailure : Socket disappears
+    
+    state NodeFailure {
+        [*] --> DetectingFailure
+        DetectingFailure --> CheckingCRDStatus : Forfeit leadership
+        CheckingCRDStatus --> CleaningCRD : Still recorded as leader
+        CheckingCRDStatus --> LocalCleanupOnly : Another pod now leader
+        CleaningCRD --> StartupPhase : Reset to startup
+        LocalCleanupOnly --> StartupPhase : Reset to startup
+    }
+    
+    LeaderActive --> NonLeader : Lost leadership
+    NonLeader --> LeaderActive : Acquired leadership
+    
+    StartupPhase --> NodeFailure : Socket lost during startup
 ```
 
 ---
@@ -309,6 +420,27 @@ sequenceDiagram
 - [ ] Prevents node restart loops due to missing credential files
 - [ ] Supports START_AS_NON_PRODUCING environment variable for controlled startup
 - [ ] Transitions to normal leadership-based credential management after node startup
+- [ ] Skips leader election during startup phase
+- [ ] Performs delayed startup cleanup after node is stable
+- [ ] Tracks startup credentials provisioned flag correctly
+
+**EC10 - Cross-Container Process Discovery**
+- [ ] Handles process discovery failures gracefully without infinite loops
+- [ ] Continues operation when cardano-node PID cannot be discovered
+- [ ] Logs cross-container setup detection appropriately (debug/info level)
+- [ ] Tracks SIGHUP skip metrics when process signaling unavailable
+- [ ] Uses socket-based readiness as primary detection mechanism
+- [ ] Documents shareProcessNamespace recommendation but doesn't require it
+- [ ] Credentials-only operation works correctly when SIGHUP unavailable
+
+**EC11 - Leadership Forfeiture Race Conditions**
+- [ ] Checks CRD status before updating during leadership forfeiture
+- [ ] Skips CRD updates when another pod already became leader
+- [ ] Always performs local credential cleanup regardless of CRD update status
+- [ ] Logs race condition detection for debugging
+- [ ] Updates local metrics even when CRD update is skipped
+- [ ] Handles ApiException during CRD status checks gracefully
+- [ ] Immediate leadership forfeiture when node socket disappears
 
 ### Technical Acceptance Criteria
 

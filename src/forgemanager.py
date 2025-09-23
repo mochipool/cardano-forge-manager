@@ -129,7 +129,7 @@ startup_credentials_provisioned = False  # Track if startup credentials are prov
 
 def discover_cardano_node_pid() -> Optional[int]:
     """Discover the cardano-node process PID.
-    
+
     Note: In multi-container pods, the cardano-node process may be running
     in a different container and not visible via psutil. We'll try to find it
     but if not found, we'll rely on socket-based detection instead.
@@ -149,9 +149,11 @@ def discover_cardano_node_pid() -> Optional[int]:
                     f"Found {CARDANO_NODE_PROCESS_NAME} in cmdline with PID {proc.info['pid']}"
                 )
                 return proc.info["pid"]
-        
+
         # If not found, log this as debug (not error) since it's expected in multi-container setups
-        logger.debug(f"Cannot find {CARDANO_NODE_PROCESS_NAME} process - likely in different container")
+        logger.debug(
+            f"Cannot find {CARDANO_NODE_PROCESS_NAME} process - likely in different container"
+        )
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
         logger.warning(f"Error discovering cardano-node process: {e}")
     except Exception as e:
@@ -161,7 +163,7 @@ def discover_cardano_node_pid() -> Optional[int]:
 
 def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
     """Send SIGHUP signal to cardano-node process.
-    
+
     In multi-container setups, the cardano-node process is not visible to this container,
     so SIGHUP signaling is not possible. Log this information but don't treat as error.
     """
@@ -172,7 +174,9 @@ def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
         cardano_node_pid = discover_cardano_node_pid()
 
     if cardano_node_pid is None:
-        logger.info(f"Cannot send SIGHUP to cardano-node (cross-container setup) - reason: {reason}")
+        logger.info(
+            f"Cannot send SIGHUP to cardano-node (cross-container setup) - reason: {reason}"
+        )
         # In multi-container setups, we can't signal the process directly
         # The credential changes should still take effect when the node reads them
         sighup_signals_total.labels(reason=f"{reason}_skipped").inc()
@@ -191,7 +195,9 @@ def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
         )
         cardano_node_pid = None  # Clear cached PID
         # Retry once with cross-container assumption
-        logger.info(f"Assuming cross-container setup - credentials updated without SIGHUP - reason: {reason}")
+        logger.info(
+            f"Assuming cross-container setup - credentials updated without SIGHUP - reason: {reason}"
+        )
         sighup_signals_total.labels(reason=f"{reason}_cross_container").inc()
         return True
     except PermissionError:
@@ -204,7 +210,7 @@ def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
 
 def is_node_in_startup_phase() -> bool:
     """Detect if cardano-node is in startup phase vs running normally.
-    
+
     In multi-container setups, we rely primarily on socket existence and stability
     rather than process discovery since we can't see the cardano-node process.
     """
@@ -214,7 +220,14 @@ def is_node_in_startup_phase() -> bool:
     if not os.path.exists(NODE_SOCKET):
         if not node_startup_phase:
             logger.info("Node socket disappeared - node entering startup/restart phase")
+            # Forfeit leadership immediately when node dies/restarts
+            forfeit_leadership()
             node_startup_phase = True
+            # Reset startup credentials flag to ensure they get provisioned again
+            global startup_credentials_provisioned
+            startup_credentials_provisioned = False
+            # Clear cached PID since the process likely died
+            cardano_node_pid = None
         return True
 
     # If we were in startup phase and socket now exists, check if it's stable
@@ -224,15 +237,17 @@ def is_node_in_startup_phase() -> bool:
             if stat.S_ISSOCK(os.stat(NODE_SOCKET).st_mode):
                 logger.info("Node startup phase complete - socket is ready and stable")
                 node_startup_phase = False
-                
+
                 # Try to discover PID for potential signaling, but don't require it
                 current_pid = discover_cardano_node_pid()
                 if current_pid:
                     cardano_node_pid = current_pid
                     logger.debug(f"Cached cardano-node PID: {current_pid}")
                 else:
-                    logger.info("Running in cross-container mode - process signaling not available")
-                
+                    logger.info(
+                        "Running in cross-container mode - process signaling not available"
+                    )
+
                 return False
             else:
                 logger.debug(f"File {NODE_SOCKET} exists but is not a socket")
@@ -279,8 +294,87 @@ def provision_startup_credentials() -> bool:
 # -----------------------------
 
 
+def forfeit_leadership():
+    """Forfeit current leadership due to node restart/failure."""
+    global current_leadership_state
+    
+    if not current_leadership_state:
+        return  # Nothing to forfeit
+    
+    logger.warning("Forfeiting leadership due to cardano-node restart")
+    
+    # Clear leadership state immediately
+    current_leadership_state = False
+    leadership_changes_total.inc()
+    
+    # Clean up credentials immediately
+    ensure_secrets(is_leader=False, send_sighup=False)
+    
+    # Check current CRD status before clearing to avoid race condition
+    # Only clear if we're still shown as the leader in the CRD
+    try:
+        current_crd = custom_objects.get_namespaced_custom_object_status(
+            group=CRD_GROUP,
+            version=CRD_VERSION,
+            namespace=NAMESPACE,
+            plural=CRD_PLURAL,
+            name=CRD_NAME,
+        )
+        
+        # Check if we're still the recorded leader
+        current_leader = current_crd.get("status", {}).get("leaderPod", "")
+        
+        if current_leader != POD_NAME:
+            logger.info(
+                f"Not clearing CRD status - another pod ({current_leader or 'none'}) is now leader"
+            )
+            # Update local metrics but don't touch CRD
+            update_metrics(is_leader=False)
+            return
+        
+        # We're still the recorded leader, safe to clear the status
+        logger.info(f"Clearing CRD status - we ({POD_NAME}) are still the recorded leader")
+        
+    except ApiException as e:
+        if e.status == 404:
+            logger.info("CRD not found during leadership forfeiture - nothing to clear")
+            update_metrics(is_leader=False)
+            return
+        else:
+            logger.warning(f"Could not check CRD status during forfeiture: {e}")
+            logger.info("Proceeding with caution to clear status anyway")
+    
+    # Update CRD to clear leadership status
+    status_body = {
+        "status": {
+            "leaderPod": "",
+            "forgingEnabled": False,
+            "lastTransitionTime": datetime.now(timezone.utc).isoformat(),
+        }
+    }
+    try:
+        custom_objects.patch_namespaced_custom_object_status(
+            group=CRD_GROUP,
+            version=CRD_VERSION,
+            namespace=NAMESPACE,
+            plural=CRD_PLURAL,
+            name=CRD_NAME,
+            body=status_body,
+        )
+        logger.info("Leadership forfeited - CRD status cleared")
+    except ApiException as e:
+        logger.error(f"Failed to clear CRD status during leadership forfeiture: {e}")
+    
+    # Update local metrics
+    update_metrics(is_leader=False)
+
+
 def update_leader_status(is_leader: bool):
     """Update CardanoLeader CRD status with current leadership state."""
+    # Only update the lease if we are a candidate for leadership
+    if not is_leader:
+        return
+
     status_body = {
         "status": {
             "leaderPod": POD_NAME if is_leader else "",
@@ -681,8 +775,10 @@ def main():
                     # Sleep and check again
                     time.sleep(SLEEP_INTERVAL)
                     continue
-                
-                logger.debug("Node startup phase complete - proceeding with leader election")
+
+                logger.debug(
+                    "Node startup phase complete - proceeding with leader election"
+                )
 
                 # Node is running normally - perform leader election
                 if startup_credentials_provisioned:
@@ -702,7 +798,9 @@ def main():
                 logger.debug(f"Ensuring secrets for leader status: {is_leader}")
                 credentials_changed = ensure_secrets(is_leader)
                 if credentials_changed:
-                    logger.info(f"Credentials {'provisioned' if is_leader else 'removed'} for leadership status")
+                    logger.info(
+                        f"Credentials {'provisioned' if is_leader else 'removed'} for leadership status"
+                    )
 
                 # Update status and metrics
                 logger.debug("Updating CRD status and metrics")

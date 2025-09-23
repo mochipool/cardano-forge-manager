@@ -40,5 +40,5 @@ clean:
 
 .PHONY: test-socket
 test-socket:
-	@kubectl cp /home/cascadura/git/cardano-forge-manager/src/test_cnode_socket_pid.py cardano-preview/cardano-bp-cardano-node-0:/tmp/test_cnode_socket_pid.py -c cardano-forge-manager
+	@kubectl cp tests/test_cnode_socket_pid.py cardano-preview/cardano-bp-cardano-node-0:/tmp/test_cnode_socket_pid.py -c cardano-forge-manager
 	@kubectl exec -n cardano-preview cardano-bp-cardano-node-0 -c cardano-forge-manager -- python3 /tmp/test_cnode_socket_pid.py
