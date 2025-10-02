@@ -1,0 +1,128 @@
+{{- if .Values.crds.create }}
+{{- if .Values.crds.cardanoLeader.enabled }}
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: cardanoleaders.{{ .Values.crds.group }}
+  labels:
+    {{- include "cardano-forge-crds.labels" . | nindent 4 }}
+    {{- with .Values.crds.cardanoLeader.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- include "cardano-forge-crds.annotations" . | nindent 4 }}
+    {{- with .Values.crds.cardanoLeader.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.crds.cardanoLeader.keepOnDelete }}
+    "helm.sh/resource-policy": keep
+    {{- end }}
+spec:
+  group: {{ .Values.crds.group }}
+  versions:
+  - name: {{ .Values.crds.version }}
+    served: true
+    storage: true
+    additionalPrinterColumns:
+    - name: Leader Pod
+      type: string
+      jsonPath: .status.leaderPod
+      description: "Current leader pod name"
+    - name: Forging
+      type: boolean
+      jsonPath: .status.forgingEnabled
+      description: "Whether forging is enabled"
+    - name: Last Transition
+      type: date
+      jsonPath: .status.lastTransitionTime
+      description: "Last leadership transition time"
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        type: object
+        description: CardanoLeader tracks local leader election state within a single Kubernetes cluster
+        properties:
+          spec:
+            type: object
+            description: Specification for CardanoLeader (minimal/unused for status-only resource)
+            properties:
+              namespace:
+                type: string
+                description: "Target namespace (informational only)"
+              description:
+                type: string
+                description: "Human-readable description of this leader resource"
+                maxLength: 256
+          status:
+            type: object
+            description: Observed state of local leader election
+            required:
+            - leaderPod
+            - forgingEnabled
+            - lastTransitionTime
+            properties:
+              leaderPod:
+                type: string
+                description: "Name of the current leader pod (empty if no leader)"
+              forgingEnabled:
+                type: boolean
+                description: "Whether forging is currently enabled"
+              lastTransitionTime:
+                type: string
+                format: date-time
+                description: "Timestamp of the last leadership transition"
+              reason:
+                type: string
+                description: "Human-readable reason for current state"
+              message:
+                type: string
+                description: "Additional details about the current state"
+              conditions:
+                type: array
+                description: "Current conditions of the CardanoLeader"
+                items:
+                  type: object
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  properties:
+                    type:
+                      type: string
+                      enum: ["Ready", "LeaderElected", "Syncing"]
+                      description: "Type of condition"
+                    status:
+                      type: string
+                      enum: ["True", "False", "Unknown"]
+                      description: "Status of the condition"
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                      description: "Last time the condition transitioned"
+                    reason:
+                      type: string
+                      description: "Machine-readable reason for the condition"
+                    message:
+                      type: string
+                      description: "Human-readable message about the condition"
+              observedGeneration:
+                type: integer
+                format: int64
+                description: "The generation of the spec that this status reflects"
+    subresources:
+      status: {}
+  scope: Namespaced
+  names:
+    plural: cardanoleaders
+    singular: cardanoleader
+    kind: CardanoLeader
+    shortNames:
+    - cl
+    - leader
+    categories:
+    - cardano
+    - blockchain
+{{- end }}
+{{- end }}

@@ -1,15 +1,26 @@
+{{- if .Values.crds.create }}
+{{- if .Values.crds.cardanoForgeCluster.enabled }}
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: cardanoforgeclusters.cardano.io
+  name: cardanoforgeclusters.{{ .Values.crds.group }}
   labels:
-    app: cardano-forge-manager
-    component: cluster-management
-    version: v2.0.0
+    {{- include "cardano-forge-crds.labels" . | nindent 4 }}
+    {{- with .Values.crds.cardanoForgeCluster.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- include "cardano-forge-crds.annotations" . | nindent 4 }}
+    {{- with .Values.crds.cardanoForgeCluster.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.crds.cardanoForgeCluster.keepOnDelete }}
+    "helm.sh/resource-policy": keep
+    {{- end }}
 spec:
-  group: cardano.io
+  group: {{ .Values.crds.group }}
   versions:
-  - name: v1
+  - name: {{ .Values.crds.version }}
     served: true
     storage: true
     additionalPrinterColumns:
@@ -28,18 +39,22 @@ spec:
     - name: Active Leader
       type: string
       jsonPath: .status.activeLeader
+    - name: Healthy
+      type: boolean
+      jsonPath: .status.healthStatus.healthy
     - name: Age
       type: date
       jsonPath: .metadata.creationTimestamp
     schema:
       openAPIV3Schema:
         type: object
+        description: CardanoForgeCluster manages forge state at the cluster level for cross-cluster deployments
         properties:
           spec:
             type: object
             required:
             - network
-            - pool
+            - pool  
             - region
             properties:
               # Network Configuration (Required)
@@ -258,6 +273,12 @@ spec:
                 type: string
                 format: date-time
                 description: "Last state transition timestamp"
+              reason:
+                type: string
+                description: "Human-readable reason for current effective state"
+              message:
+                type: string
+                description: "Additional details about the current state"
                 
               # Health Status
               healthStatus:
@@ -303,6 +324,12 @@ spec:
                       type: string
                     message:
                       type: string
+              
+              # Generation tracking
+              observedGeneration:
+                type: integer
+                format: int64
+                description: "The generation of the spec that this status reflects"
     subresources:
       status: {}
   scope: Namespaced
@@ -315,54 +342,5 @@ spec:
     categories:
     - cardano
     - blockchain
-
----
-# RBAC for multi-tenant CardanoForgeCluster management
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: cardano-forge-manager-multi-tenant
-  labels:
-    app: cardano-forge-manager
-    component: rbac
-rules:
-# CardanoForgeCluster CRD permissions
-- apiGroups: ["cardano.io"]
-  resources: ["cardanoforgeclusters"]
-  verbs: ["get", "list", "watch", "create", "update", "patch"]
-- apiGroups: ["cardano.io"]
-  resources: ["cardanoforgeclusters/status"]
-  verbs: ["get", "update", "patch"]
-  
-# Lease coordination (scoped per pool)
-- apiGroups: ["coordination.k8s.io"]
-  resources: ["leases"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  resourceNames: [] # Will be restricted by pool-specific lease names
-  
-# Pod and node information (read-only)
-- apiGroups: [""]
-  resources: ["pods", "nodes"]
-  verbs: ["get", "list", "watch"]
-  
-# Events for debugging
-- apiGroups: [""]
-  resources: ["events"]
-  verbs: ["create", "patch"]
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: cardano-forge-manager-multi-tenant
-  labels:
-    app: cardano-forge-manager
-    component: rbac
-subjects:
-- kind: ServiceAccount
-  name: cardano-forge-manager
-  namespace: default # This will be overridden per deployment
-roleRef:
-  kind: ClusterRole
-  name: cardano-forge-manager-multi-tenant
-  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+{{- end }}

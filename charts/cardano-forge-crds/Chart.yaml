@@ -1,0 +1,60 @@
+apiVersion: v2
+name: cardano-forge-crds
+description: Custom Resource Definitions for Cardano Forge Manager cluster-wide forging
+type: application
+version: 2.0.0
+appVersion: "2.0.0"
+keywords:
+  - cardano
+  - blockchain
+  - kubernetes
+  - forging
+  - crds
+home: https://github.com/mochipool/cardano-forge-manager
+sources:
+  - https://github.com/mochipool/cardano-forge-manager
+maintainers:
+  - name: Cardano Forge Manager Team
+    email: support@example.com
+annotations:
+  category: Blockchain
+  licenses: MIT
+  artifacthub.io/changes: |
+    - kind: added
+      description: CardanoForgeCluster CRD for cluster-wide forge management
+    - kind: added
+      description: CardanoLeader CRD for local leader election within a cluster
+    - kind: added  
+      description: Multi-tenant support with network and pool identification
+    - kind: added
+      description: Health check integration for automatic failover
+    - kind: added
+      description: Priority-based cluster coordination
+  artifacthub.io/crds: |
+    - kind: CardanoLeader
+      version: v1
+      name: cardanoleaders.cardano.io
+      displayName: Cardano Leader
+      description: Tracks local leader election state within a single Kubernetes cluster
+    - kind: CardanoForgeCluster
+      version: v1
+      name: cardanoforgeclusters.cardano.io
+      displayName: Cardano Forge Cluster
+      description: Manages cluster-wide forge state and coordination for Cardano block producers
+  artifacthub.io/crdsExamples: |
+    - apiVersion: cardano.io/v1
+      kind: CardanoForgeCluster
+      metadata:
+        name: mainnet-pool1abc-us-east-1
+      spec:
+        network:
+          name: mainnet
+          magic: 764824073
+        pool:
+          id: pool1abcd1234567890abcd1234567890abcd1234567890abcd1234
+          idHex: "a1b2c3d4e5f6789012345678901234567890123456789012345678901234"
+          name: "My Cardano Pool"
+          ticker: "POOL"
+        forgeState: Priority-based
+        priority: 1
+        region: us-east-1

@@ -1,0 +1,88 @@
+{{- if .Values.rbac.create }}
+{{- if .Values.rbac.serviceAccount.create }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "cardano-forge-crds.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "cardano-forge-crds.labels" . | nindent 4 }}
+    {{- with .Values.rbac.serviceAccount.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- include "cardano-forge-crds.annotations" . | nindent 4 }}
+    {{- with .Values.rbac.serviceAccount.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+
+{{- if .Values.rbac.clusterRole.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "cardano-forge-crds.clusterRoleName" . }}
+  labels:
+    {{- include "cardano-forge-crds.labels" . | nindent 4 }}
+    {{- with .Values.rbac.clusterRole.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- include "cardano-forge-crds.annotations" . | nindent 4 }}
+    {{- with .Values.rbac.clusterRole.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+rules:
+  # CardanoForgeCluster CRD permissions
+  - apiGroups: ["{{ .Values.crds.group }}"]
+    resources: ["cardanoforgeclusters"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  
+  # CardanoForgeCluster status permissions  
+  - apiGroups: ["{{ .Values.crds.group }}"]
+    resources: ["cardanoforgeclusters/status"]
+    verbs: ["get", "update", "patch"]
+  
+  # Coordination/leases permissions for leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Legacy CardanoLeader CRD permissions (for backward compatibility)
+  - apiGroups: ["cardano.io"]
+    resources: ["cardanoleaders"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+    
+  - apiGroups: ["cardano.io"]
+    resources: ["cardanoleaders/status"]
+    verbs: ["get", "update", "patch"]
+{{- end }}
+
+{{- if .Values.rbac.clusterRoleBinding.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "cardano-forge-crds.clusterRoleBindingName" . }}
+  labels:
+    {{- include "cardano-forge-crds.labels" . | nindent 4 }}
+    {{- with .Values.rbac.clusterRoleBinding.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- include "cardano-forge-crds.annotations" . | nindent 4 }}
+    {{- with .Values.rbac.clusterRoleBinding.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "cardano-forge-crds.clusterRoleName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "cardano-forge-crds.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+{{- end }}
+{{- end }}

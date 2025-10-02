@@ -151,9 +151,9 @@ kubeconfig.*
 kube-config.*
 
 # Helm
-.helmignore
-charts/
-Chart.lock
+# .helmignore
+# charts/
+# Chart.lock
 
 # Secrets and credentials
 # -----------------------

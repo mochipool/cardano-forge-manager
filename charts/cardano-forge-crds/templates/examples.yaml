@@ -1,0 +1,82 @@
+{{- if .Values.examples.create }}
+{{- range .Values.examples.clusters }}
+---
+apiVersion: {{ $.Values.crds.group }}/{{ $.Values.crds.version }}
+kind: CardanoForgeCluster
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace | quote }}
+  labels:
+    {{- include "cardano-forge-crds.labels" $ | nindent 4 }}
+    cardano.io/example: "true"
+  annotations:
+    {{- include "cardano-forge-crds.annotations" $ | nindent 4 }}
+    cardano.io/description: "Example CardanoForgeCluster for testing and demonstration"
+spec:
+  network:
+    name: {{ .network.name }}
+    magic: {{ .network.magic }}
+    {{- with .network.era }}
+    era: {{ . }}
+    {{- end }}
+  pool:
+    id: {{ .pool.id }}
+    idHex: {{ .pool.idHex | quote }}
+    name: {{ .pool.name }}
+    ticker: {{ .pool.ticker }}
+    {{- with .pool.description }}
+    description: {{ . }}
+    {{- end }}
+  {{- with .application }}
+  application:
+    {{- with .type }}
+    type: {{ . }}
+    {{- end }}
+    {{- with .version }}
+    version: {{ . }}
+    {{- end }}
+    {{- with .environment }}
+    environment: {{ . }}
+    {{- end }}
+  {{- end }}
+  region: {{ .region }}
+  forgeState: {{ .forgeState | default "Priority-based" }}
+  priority: {{ .priority | default 100 }}
+  {{- with .healthCheck }}
+  healthCheck:
+    enabled: {{ .enabled | default false }}
+    {{- with .endpoint }}
+    endpoint: {{ . }}
+    {{- end }}
+    {{- with .interval }}
+    interval: {{ . }}
+    {{- end }}
+    {{- with .timeout }}
+    timeout: {{ . }}
+    {{- end }}
+    {{- with .failureThreshold }}
+    failureThreshold: {{ . }}
+    {{- end }}
+    {{- with .headers }}
+    headers:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- end }}
+  {{- with .override }}
+  override:
+    enabled: {{ .enabled | default false }}
+    {{- with .reason }}
+    reason: {{ . }}
+    {{- end }}
+    {{- with .expiresAt }}
+    expiresAt: {{ . }}
+    {{- end }}
+    {{- with .forcePriority }}
+    forcePriority: {{ . }}
+    {{- end }}
+    {{- with .forceState }}
+    forceState: {{ . }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
