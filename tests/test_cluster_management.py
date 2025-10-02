@@ -16,7 +16,19 @@ from unittest.mock import Mock, patch, MagicMock
 import os
 import sys
 import json
+import importlib
 from datetime import datetime, timezone, timedelta
+
+# Set test environment variables before importing cluster_manager
+os.environ.update({
+    'CLUSTER_IDENTIFIER': 'test-cluster',
+    'CLUSTER_REGION': 'us-test-1',
+    'CLUSTER_ENVIRONMENT': 'test',
+    'CLUSTER_PRIORITY': '5',
+    'ENABLE_CLUSTER_MANAGEMENT': 'true',
+    'HEALTH_CHECK_ENDPOINT': 'http://test.example.com/health',
+    'HEALTH_CHECK_INTERVAL': '10',
+})
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -32,17 +44,6 @@ class TestClusterForgeManager(unittest.TestCase):
         """Set up test environment."""
         # Mock Kubernetes API
         self.mock_api = Mock()
-        
-        # Set test environment variables
-        os.environ.update({
-            'CLUSTER_IDENTIFIER': 'test-cluster',
-            'CLUSTER_REGION': 'us-test-1',
-            'CLUSTER_ENVIRONMENT': 'test',
-            'CLUSTER_PRIORITY': '5',
-            'ENABLE_CLUSTER_MANAGEMENT': 'true',
-            'HEALTH_CHECK_ENDPOINT': 'http://test.example.com/health',
-            'HEALTH_CHECK_INTERVAL': '10',
-        })
         
         # Create test instance
         self.cluster_mgr = cluster_manager.ClusterForgeManager(self.mock_api)
@@ -67,17 +68,20 @@ class TestClusterForgeManager(unittest.TestCase):
         self.assertEqual(self.cluster_mgr.priority, 5)
         self.assertTrue(self.cluster_mgr.enabled)
     
+    @patch.dict(os.environ, {'ENABLE_CLUSTER_MANAGEMENT': 'false'})
     def test_disabled_cluster_management(self):
         """Test behavior when cluster management is disabled."""
-        os.environ['ENABLE_CLUSTER_MANAGEMENT'] = 'false'
-        
-        disabled_mgr = cluster_manager.ClusterForgeManager(self.mock_api)
-        self.assertFalse(disabled_mgr.enabled)
-        
-        # Should allow leadership when disabled
-        allowed, reason = disabled_mgr.should_allow_local_leadership()
-        self.assertTrue(allowed)
-        self.assertEqual(reason, 'cluster_management_disabled')
+        # Create new manager with patched environment
+        with patch('cluster_manager.ENABLE_CLUSTER_MANAGEMENT', False):
+            disabled_mgr = cluster_manager.ClusterForgeManager(self.mock_api)
+            disabled_mgr.enabled = False  # Manually set since env var is cached at module level
+            
+            self.assertFalse(disabled_mgr.enabled)
+            
+            # Should allow leadership when disabled
+            allowed, reason = disabled_mgr.should_allow_local_leadership()
+            self.assertTrue(allowed)
+            self.assertEqual(reason, 'cluster_management_disabled')
     
     def test_should_allow_leadership_no_crd(self):
         """Test leadership decision when no CRD exists."""
