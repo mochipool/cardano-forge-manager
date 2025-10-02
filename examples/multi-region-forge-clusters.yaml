@@ -1,0 +1,119 @@
+# Multi-Region Cardano Forge Cluster Examples
+# These examples show how to configure cluster-wide forge management
+# for SPOs running across multiple regions or availability zones.
+
+---
+# Primary cluster (highest priority) - US East
+apiVersion: cardano.io/v1
+kind: CardanoForgeCluster
+metadata:
+  name: us-east-1-prod
+  labels:
+    cardano.io/region: us-east-1
+    cardano.io/environment: production
+    cardano.io/pool-id: pool1abcdef123456789  # Replace with actual pool ID
+spec:
+  forgeState: Priority-based
+  priority: 1  # Highest priority
+  region: us-east-1
+  environment: production
+  clusterIdentifier: us-east-1-prod
+  healthCheck:
+    enabled: true
+    endpoint: "http://monitoring.example.com/health/us-east-1"
+    interval: "30s"
+    timeout: "10s"
+    failureThreshold: 3
+
+---
+# Secondary cluster - US West (backup)
+apiVersion: cardano.io/v1
+kind: CardanoForgeCluster
+metadata:
+  name: us-west-2-prod
+  labels:
+    cardano.io/region: us-west-2
+    cardano.io/environment: production
+    cardano.io/pool-id: pool1abcdef123456789
+spec:
+  forgeState: Priority-based
+  priority: 2  # Secondary priority
+  region: us-west-2
+  environment: production
+  clusterIdentifier: us-west-2-prod
+  healthCheck:
+    enabled: true
+    endpoint: "http://monitoring.example.com/health/us-west-2"
+    interval: "30s"
+    timeout: "10s"
+    failureThreshold: 3
+
+---
+# European cluster - Third priority
+apiVersion: cardano.io/v1
+kind: CardanoForgeCluster
+metadata:
+  name: eu-west-1-prod
+  labels:
+    cardano.io/region: eu-west-1
+    cardano.io/environment: production
+    cardano.io/pool-id: pool1abcdef123456789
+spec:
+  forgeState: Priority-based
+  priority: 3  # Third priority
+  region: eu-west-1
+  environment: production
+  clusterIdentifier: eu-west-1-prod
+  healthCheck:
+    enabled: true
+    endpoint: "http://monitoring.example.com/health/eu-west-1"
+    interval: "30s"
+    timeout: "10s"
+    failureThreshold: 3
+
+---
+# Test/Development cluster - Always disabled in production
+apiVersion: cardano.io/v1
+kind: CardanoForgeCluster
+metadata:
+  name: staging-cluster
+  labels:
+    cardano.io/region: us-east-1
+    cardano.io/environment: staging
+    cardano.io/pool-id: pool1abcdef123456789
+spec:
+  forgeState: Disabled  # Never forge in staging
+  priority: 999
+  region: us-east-1
+  environment: staging
+  clusterIdentifier: staging-cluster
+  healthCheck:
+    enabled: false
+
+---
+# Manual failover example - Temporary override
+apiVersion: cardano.io/v1
+kind: CardanoForgeCluster
+metadata:
+  name: us-west-2-prod-failover
+  labels:
+    cardano.io/region: us-west-2
+    cardano.io/environment: production
+    cardano.io/pool-id: pool1abcdef123456789
+spec:
+  forgeState: Priority-based
+  priority: 2
+  region: us-west-2
+  environment: production
+  clusterIdentifier: us-west-2-prod-failover
+  override:
+    enabled: true
+    reason: "Manual failover due to us-east-1 maintenance"
+    expiresAt: "2025-10-02T10:00:00Z"  # Expires after maintenance window
+    forcePriority: 1  # Temporarily make this highest priority
+  healthCheck:
+    enabled: true
+    endpoint: "http://monitoring.example.com/health/us-west-2"
+    interval: "30s"
+    timeout: "10s"
+    failureThreshold: 3

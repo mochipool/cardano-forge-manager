@@ -1,0 +1,209 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: cardanoforgeclusters.cardano.io
+  labels:
+    app.kubernetes.io/name: cardano-forge-manager
+    app.kubernetes.io/component: cluster-management
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.13.0
+spec:
+  group: cardano.io
+  names:
+    kind: CardanoForgeCluster
+    listKind: CardanoForgeClusterList
+    plural: cardanoforgeclusters
+    singular: cardanoforgetcluster
+    shortNames:
+    - cfc
+    - forgecluster
+  scope: Cluster  # Cluster-scoped resource for global management
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        description: CardanoForgeCluster manages forge state at the cluster level for cross-cluster deployments
+        properties:
+          spec:
+            type: object
+            description: CardanoForgeClusterSpec defines the desired state of cluster-wide forging
+            properties:
+              forgeState:
+                type: string
+                enum: ["Enabled", "Disabled", "Priority-based"]
+                default: "Priority-based"
+                description: "Global forge state: Enabled (always forge), Disabled (never forge), Priority-based (forge if highest priority)"
+              priority:
+                type: integer
+                minimum: 1
+                maximum: 999
+                default: 100
+                description: "Cluster priority for forge leadership (1=highest, 999=lowest)"
+              region:
+                type: string
+                description: "Geographic region or zone identifier for this cluster"
+                maxLength: 63
+                pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              environment:
+                type: string
+                enum: ["production", "staging", "development", "test"]
+                default: "production"
+                description: "Environment classification for operational procedures"
+              clusterIdentifier:
+                type: string
+                description: "Unique identifier for this cluster (auto-generated if not specified)"
+                maxLength: 63
+                pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              healthCheck:
+                type: object
+                description: "Health check configuration for automated failover"
+                properties:
+                  enabled:
+                    type: boolean
+                    default: false
+                    description: "Enable health-based priority adjustment"
+                  endpoint:
+                    type: string
+                    format: uri
+                    description: "HTTP endpoint for health validation"
+                  interval:
+                    type: string
+                    default: "30s"
+                    pattern: '^[0-9]+[smh]$'
+                    description: "Health check interval (e.g., 30s, 5m, 1h)"
+                  timeout:
+                    type: string
+                    default: "10s"
+                    pattern: '^[0-9]+[smh]$'
+                    description: "Health check timeout"
+                  failureThreshold:
+                    type: integer
+                    minimum: 1
+                    maximum: 10
+                    default: 3
+                    description: "Number of consecutive failures before declaring unhealthy"
+              override:
+                type: object
+                description: "Temporary override configuration for manual failover"
+                properties:
+                  enabled:
+                    type: boolean
+                    default: false
+                    description: "Enable manual override"
+                  reason:
+                    type: string
+                    maxLength: 256
+                    description: "Human-readable reason for the override"
+                  expiresAt:
+                    type: string
+                    format: date-time
+                    description: "When this override expires (RFC3339 format)"
+                  forcePriority:
+                    type: integer
+                    minimum: 1
+                    maximum: 999
+                    description: "Override priority value during override period"
+            required:
+            - forgeState
+            - priority
+          status:
+            type: object
+            description: CardanoForgeClusterStatus defines the observed state
+            properties:
+              effectiveState:
+                type: string
+                enum: ["Enabled", "Disabled", "Priority-based"]
+                description: "Effective forge state after applying health checks and overrides"
+              effectivePriority:
+                type: integer
+                description: "Effective priority after health and override adjustments"
+              lastTransition:
+                type: string
+                format: date-time
+                description: "Timestamp of last state transition"
+              activeLeader:
+                type: string
+                description: "Name of the currently active leader pod in this cluster"
+              reason:
+                type: string
+                description: "Human-readable reason for current effective state"
+              message:
+                type: string
+                description: "Additional details about the current state"
+              observedGeneration:
+                type: integer
+                format: int64
+                description: "The generation of the spec that this status reflects"
+              conditions:
+                type: array
+                description: "Current conditions of the CardanoForgeCluster"
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                      description: "Type of condition"
+                    status:
+                      type: string
+                      enum: ["True", "False", "Unknown"]
+                      description: "Status of the condition"
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                      description: "Last time the condition transitioned"
+                    reason:
+                      type: string
+                      description: "Machine-readable reason for the condition"
+                    message:
+                      type: string
+                      description: "Human-readable message about the condition"
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+              healthStatus:
+                type: object
+                description: "Current health check status"
+                properties:
+                  healthy:
+                    type: boolean
+                    description: "Whether the cluster is currently healthy"
+                  lastProbeTime:
+                    type: string
+                    format: date-time
+                    description: "Last time health was probed"
+                  consecutiveFailures:
+                    type: integer
+                    description: "Number of consecutive health check failures"
+                  message:
+                    type: string
+                    description: "Details about health status"
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: State
+      type: string
+      description: "Effective forge state"
+      jsonPath: ".status.effectiveState"
+    - name: Priority
+      type: integer
+      description: "Effective priority"
+      jsonPath: ".status.effectivePriority"
+    - name: Region
+      type: string
+      description: "Cluster region"
+      jsonPath: ".spec.region"
+    - name: Active Leader
+      type: string
+      description: "Current leader pod"
+      jsonPath: ".status.activeLeader"
+    - name: Healthy
+      type: boolean
+      description: "Health status"
+      jsonPath: ".status.healthStatus.healthy"
+    - name: Age
+      type: date
+      jsonPath: ".metadata.creationTimestamp"

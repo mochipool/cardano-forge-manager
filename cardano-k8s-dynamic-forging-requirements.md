@@ -22,7 +22,7 @@ This document describes the requirements, architecture, and edge cases for such 
 ## Non-Goals
 - Managing or automating key rotation.  
 - Running Cardano relays (covered separately).  
-- Cross-cluster failover (focus is within one Kubernetes cluster).  
+~~- Cross-cluster failover (focus is within one Kubernetes cluster).~~ **[UPDATED]** - See FR9 below for cluster-wide forge management.
 
 ---
 
@@ -53,6 +53,116 @@ This document describes the requirements, architecture, and edge cases for such 
    - Forging credentials stored only in Kubernetes `Secret`.  
    - Sidecar writes them only into the pod it manages.  
    - RBAC restricted to minimal permissions.
+9. **Cluster-wide forge management** *(Extension)*:
+   - Ability to globally enable/disable forging across all clusters for an SPO.
+   - Support for multi-region deployments with manual failover capability.
+   - Kubernetes-native management using CRD-based controls.
+   - Cluster priority system for automated failover ordering.
+   - Clear observability of which cluster/region is actively forging.
+
+---
+
+## Cluster-Wide Forge Management (Extension)
+
+### Overview
+Stake Pool Operators (SPOs) running multi-region deployments require the ability to control forging at a global level across all their Kubernetes clusters. This enables manual failover between regions, maintenance windows, and coordinated disaster recovery.
+
+### Functional Requirements
+
+#### FR9.1 - Global Forge Control CRD
+- **CardanoForgeCluster CRD** manages forge state at cluster level
+- Cluster-scoped resource that overrides local CardanoLeader behavior
+- Supports states: `Enabled`, `Disabled`, `Priority-based`
+- Contains cluster identification, priority, and region information
+
+#### FR9.2 - Hierarchical Decision Making
+- Local CardanoLeader CRDs check CardanoForgeCluster state before forging
+- Priority order: `CardanoForgeCluster.Disabled` > `CardanoForgeCluster.Priority` > `CardanoLeader`
+- If cluster forge is disabled, no local leaders can forge regardless of lease status
+
+#### FR9.3 - Cross-Cluster Priority System
+- Clusters assigned priority levels (1=highest, 999=lowest)
+- Only highest priority "enabled" cluster should have active forging
+- Priority ties broken by cluster creation timestamp
+- Supports manual priority override for failover
+
+#### FR9.4 - Regional Failover Support
+- Clusters tagged with region/zone labels
+- Manual failover by updating cluster priorities
+- Automated failover based on cluster health checks (optional)
+- Gradual transition support to minimize forging gaps
+
+#### FR9.5 - Observability and Control
+- Metrics: `cardano_cluster_forge_enabled{cluster="...", region="..."}` (1 or 0)
+- Metrics: `cardano_cluster_forge_priority{cluster="..."}` (priority number)
+- CRD status shows effective forge state and reasons
+- Integration with existing pod-level metrics
+
+### Edge Cases & Failure Modes
+
+#### EC12 - Cross-Cluster Communication Failure
+- **Problem:** Clusters cannot communicate to coordinate priority
+- **Mitigation:** Each cluster makes independent decisions based on local CRD state
+- **Impact:** Temporary split-brain possible during network partition
+- **Detection:** Monitor for multiple clusters showing `cardano_cluster_forge_enabled=1`
+
+#### EC13 - CRD Synchronization Lag
+- **Problem:** CardanoForgeCluster updates don't propagate instantly to all pods
+- **Mitigation:** Implement CRD watch with backoff retry
+- **Grace Period:** Allow 30s for CRD changes to propagate before alerting
+- **Fallback:** Default to disabled state if CRD cannot be read
+
+#### EC14 - Priority Conflict Resolution
+- **Problem:** Multiple clusters configured with same priority
+- **Mitigation:** Use cluster creation timestamp as tiebreaker
+- **Detection:** Log priority conflicts at startup
+- **Manual Override:** Explicit priority assignment overrides automatic resolution
+
+#### EC15 - Cluster Health vs Priority Mismatch
+- **Problem:** Highest priority cluster is unhealthy but still enabled
+- **Mitigation:** Health checks influence effective priority calculation
+- **Manual Override:** SPO can force failover by changing priorities
+- **Automation:** Optional automated failover based on configurable health thresholds
+
+#### EC16 - Global Disable Race Conditions
+- **Problem:** Global disable command reaches different clusters at different times
+- **Mitigation:** Each cluster disables forging immediately upon receiving disable command
+- **Safety:** Prefer temporary no-forging over dual-forging during transitions
+- **Recovery:** Re-enable follows priority order with staggered timing
+
+### Example CRD Structure
+
+```yaml
+apiVersion: cardano.io/v1
+kind: CardanoForgeCluster
+metadata:
+  name: us-west-2-prod
+  labels:
+    cardano.io/region: us-west-2
+    cardano.io/environment: production
+spec:
+  forgeState: Enabled  # Enabled | Disabled | Priority-based
+  priority: 1          # 1=highest, 999=lowest
+  healthCheck:
+    enabled: true
+    endpoint: "http://monitoring.example.com/cluster/health"
+    interval: 30s
+  override:
+    reason: "Manual failover for maintenance"
+    expiresAt: "2025-10-02T10:00:00Z"
+status:
+  effectiveState: Enabled
+  lastTransition: "2025-10-02T05:43:00Z"
+  activeLeader: "cardano-bp-0"
+  reason: "Highest priority cluster"
+  conditions:
+  - type: ForgeEnabled
+    status: "True"
+    reason: HighestPriority
+  - type: HealthCheckPassing
+    status: "True"
+    lastProbeTime: "2025-10-02T05:42:30Z"
+```
 
 ---
 
@@ -273,10 +383,14 @@ stateDiagram-v2
 - Metrics:
   - `cardano_forging_enabled{pod="..."}` (1 or 0).  
   - `cardano_leader_status{pod="..."}` (1 if leader).  
-  - `cardano_leadership_changes_total`.  
+  - `cardano_leadership_changes_total`.
+  - `cardano_cluster_forge_enabled{cluster="...", region="..."}` (1 or 0) - *Extension for FR9*.
+  - `cardano_cluster_forge_priority{cluster="..."}` (priority number) - *Extension for FR9*.
 - Alerts:
   - `sum(cardano_forging_enabled) > 1` → Critical.  
-  - `sum(cardano_forging_enabled) == 0 for 60s` → Warning.  
+  - `sum(cardano_forging_enabled) == 0 for 60s` → Warning.
+  - `sum(cardano_cluster_forge_enabled) > 1` → Critical (multi-cluster split-brain) - *Extension for FR9*.
+  - `sum(cardano_cluster_forge_enabled) == 0 for 60s` → Warning (no cluster forging) - *Extension for FR9*.
 - Logs:
   - Sidecar must log every leadership transition, SIGHUP sent, and credential state change.
 - Leader Observation:
@@ -372,6 +486,18 @@ stateDiagram-v2
 - [ ] Credentials removed immediately when leadership lost
 - [ ] RBAC limited to minimal required permissions
 
+**FR9 - Cluster-Wide Forge Management (Extension)**
+- [ ] CardanoForgeCluster CRD manages forge state at cluster level
+- [ ] Supports forgeState values: Enabled, Disabled, Priority-based
+- [ ] Contains cluster identification, priority, and region labels
+- [ ] Local CardanoLeader behavior respects cluster-wide settings
+- [ ] Priority system prevents multiple clusters from forging simultaneously
+- [ ] Manual failover supported via priority updates
+- [ ] Health check integration influences effective priority
+- [ ] Cluster-wide disable immediately stops all local forging
+- [ ] Gradual transition support for maintenance scenarios
+- [ ] CRD status reflects effective state and transition reasons
+
 ### Edge Cases Acceptance Criteria
 
 **EC1 - Premature SIGHUP Prevention**
@@ -442,6 +568,36 @@ stateDiagram-v2
 - [ ] Handles ApiException during CRD status checks gracefully
 - [ ] Immediate leadership forfeiture when node socket disappears
 
+**EC12 - Cross-Cluster Communication Failure (Extension)**
+- [ ] Clusters make independent decisions based on local CRD state
+- [ ] Temporary split-brain detection via metrics monitoring
+- [ ] Network partition recovery works correctly
+- [ ] Default behavior during communication failure is safe (no dual forging)
+
+**EC13 - CRD Synchronization Lag (Extension)**
+- [ ] CRD watch implemented with backoff retry mechanism
+- [ ] 30 second grace period for CRD propagation
+- [ ] Defaults to disabled state when CRD cannot be read
+- [ ] Logs synchronization delays appropriately
+
+**EC14 - Priority Conflict Resolution (Extension)**
+- [ ] Cluster creation timestamp used as tiebreaker for equal priorities
+- [ ] Priority conflicts logged at startup
+- [ ] Manual priority override works correctly
+- [ ] Automatic conflict resolution is deterministic
+
+**EC15 - Cluster Health vs Priority Mismatch (Extension)**
+- [ ] Health checks influence effective priority calculation
+- [ ] Manual override bypasses health-based priority changes
+- [ ] Automated failover respects configurable health thresholds
+- [ ] Health check failures logged with appropriate severity
+
+**EC16 - Global Disable Race Conditions (Extension)**
+- [ ] Immediate forging disable upon receiving global disable command
+- [ ] Prefers temporary no-forging over dual-forging during transitions
+- [ ] Re-enable follows priority order with staggered timing
+- [ ] Race conditions during enable/disable transitions handled safely
+
 ### Technical Acceptance Criteria
 
 **Process Management**
@@ -467,6 +623,18 @@ stateDiagram-v2
 - [ ] Metric labels include pod name for identification
 - [ ] Metrics persist across application restarts
 
+**Cluster-Wide Management (Extension)**
+- [ ] CardanoForgeCluster CRD properly defined with OpenAPI schema
+- [ ] CRD includes cluster, region, and priority labels
+- [ ] CRD status subresource tracks effective state and conditions
+- [ ] Forge manager watches CardanoForgeCluster CRD changes in real-time
+- [ ] Hierarchical decision making: cluster state overrides local leader state
+- [ ] Priority-based decision making works across multiple clusters
+- [ ] Health check endpoint integration (optional) influences priorities
+- [ ] Cluster-wide metrics exposed: cardano_cluster_forge_enabled, cardano_cluster_forge_priority
+- [ ] RBAC includes permissions for CardanoForgeCluster CRD access
+- [ ] Configuration supports cluster identification and priority settings
+
 ---
 
 ## Next Steps
@@ -481,3 +649,11 @@ stateDiagram-v2
    - Crash recovery.  
    - Split-brain prevention.  
    - Double forging alerts.
+5. **Cluster-Wide Forge Management (Extension)**:
+   - Define CardanoForgeCluster CRD with OpenAPI schema.
+   - Implement cluster state watching and hierarchical decision making.
+   - Add cluster-wide metrics: `cardano_cluster_forge_enabled`, `cardano_cluster_forge_priority`.
+   - Create example multi-region deployment configurations.
+   - Implement health check integration for automated failover.
+   - Test cross-cluster priority resolution and race condition handling.
+   - Document SPO operational procedures for manual failover scenarios.
