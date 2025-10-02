@@ -10,16 +10,16 @@ This module provides functionality for:
 - Hierarchical decision making for forge enablement
 """
 
-import os
-import time
 import logging
+import os
 import socket
-import requests
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any, List, Tuple
 import threading
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Tuple
 
-from kubernetes import client, config, watch
+import requests
+from kubernetes import client, watch
 from kubernetes.client.rest import ApiException
 
 logger = logging.getLogger("cardano-forge-manager.cluster")

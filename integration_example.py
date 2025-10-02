@@ -169,25 +169,19 @@ def initialize_cluster_manager() -> Optional[ClusterManager]:
         logger.info("Cluster management disabled - running in single-cluster mode")
         return None
     
-    try:
-        logger.info("Initializing cluster manager for multi-cluster coordination")
-        manager = ClusterManager(
-            cluster_name=CLUSTER_NAME,
-            namespace=NAMESPACE,
-            priority=CLUSTER_PRIORITY,
-            health_check_endpoint=HEALTH_CHECK_ENDPOINT,
-            health_check_interval=HEALTH_CHECK_INTERVAL,
-        )
-        
-        # Start the cluster manager (creates CRD, starts health checks, etc.)
-        manager.start()
-        logger.info(f"Cluster manager initialized for cluster: {CLUSTER_NAME}")
-        return manager
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize cluster manager: {e}")
-        # Fall back to single-cluster mode
-        return None
+    logger.info("Initializing cluster manager for multi-cluster coordination")
+    manager = ClusterManager(
+        cluster_name=CLUSTER_NAME,
+        namespace=NAMESPACE,
+        priority=CLUSTER_PRIORITY,
+        health_check_endpoint=HEALTH_CHECK_ENDPOINT,
+        health_check_interval=HEALTH_CHECK_INTERVAL,
+    )
+    
+    # Start the cluster manager (creates CRD, starts health checks, etc.)
+    manager.start()
+    logger.info(f"Cluster manager initialized for cluster: {CLUSTER_NAME}")
+    return manager
 
 
 def main_loop():

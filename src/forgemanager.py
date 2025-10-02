@@ -7,31 +7,23 @@ This sidecar manages leader election, credential distribution, and process signa
 for Cardano block producer nodes running in Kubernetes.
 """
 
-import os
-import time
 import logging
+import os
 import shutil
-import stat
 import signal
-import threading
-from pathlib import Path
-from typing import Optional, List
-from datetime import datetime, timezone, timedelta
+import stat
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 # Third-party imports
 import psutil
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from prometheus_client import start_http_server, Gauge, Counter, Info
+from prometheus_client import Counter, Gauge, Info, start_http_server
 
 # Cluster management (extension)
-try:
-    from . import cluster_manager
-
-    CLUSTER_MANAGEMENT_AVAILABLE = True
-except ImportError:
-    CLUSTER_MANAGEMENT_AVAILABLE = False
-    logger.warning("Cluster management not available - running in single-cluster mode")
+from . import cluster_manager
 
 # -----------------------------
 # Environment variables
@@ -134,9 +126,8 @@ except Exception:
 custom_objects = client.CustomObjectsApi()
 coord_api = client.CoordinationV1Api()
 
-# Initialize cluster management if available
-if CLUSTER_MANAGEMENT_AVAILABLE:
-    cluster_manager.initialize_cluster_manager(custom_objects)
+# Initialize cluster management
+cluster_manager.initialize_cluster_manager(custom_objects)
 
 # -----------------------------
 # Global State
@@ -423,10 +414,9 @@ def update_leader_status(is_leader: bool):
         )
 
         # Also update cluster CRD if cluster management is enabled
-        if CLUSTER_MANAGEMENT_AVAILABLE:
-            cluster_manager.update_cluster_leader_status(
-                POD_NAME if is_leader else None, is_leader
-            )
+        cluster_manager.update_cluster_leader_status(
+            POD_NAME if is_leader else None, is_leader
+        )
 
     except ApiException as e:
         logger.error(f"Failed to update CRD status: {e}")
@@ -438,17 +428,16 @@ def update_metrics(is_leader: bool):
     forging_enabled.labels(pod=POD_NAME).set(1 if is_leader else 0)
 
     # Update cluster-wide metrics if available
-    if CLUSTER_MANAGEMENT_AVAILABLE:
-        cluster_metrics = cluster_manager.get_cluster_metrics()
-        if cluster_metrics.get("enabled", False):
-            cluster_id = cluster_metrics.get("cluster_id", "unknown")
-            region = cluster_metrics.get("region", "unknown")
-            cluster_forge_enabled.labels(cluster=cluster_id, region=region).set(
-                1 if cluster_metrics.get("forge_enabled", False) else 0
-            )
-            cluster_forge_priority.labels(cluster=cluster_id, region=region).set(
-                cluster_metrics.get("effective_priority", 999)
-            )
+    cluster_metrics = cluster_manager.get_cluster_metrics()
+    if cluster_metrics.get("enabled", False):
+        cluster_id = cluster_metrics.get("cluster_id", "unknown")
+        region = cluster_metrics.get("region", "unknown")
+        cluster_forge_enabled.labels(cluster=cluster_id, region=region).set(
+            1 if cluster_metrics.get("forge_enabled", False) else 0
+        )
+        cluster_forge_priority.labels(cluster=cluster_id, region=region).set(
+            cluster_metrics.get("effective_priority", 999)
+        )
 
     logger.debug(f"Metrics updated: leader={is_leader}, forging={is_leader}")
 
@@ -493,7 +482,7 @@ def remove_file(path: str, file_type: str) -> bool:
         return True
 
 
-def wait_for_socket(timeout: int = None) -> bool:
+def wait_for_socket(timeout: int = 0) -> bool:
     """Wait for cardano-node socket to exist before proceeding."""
     if DISABLE_SOCKET_CHECK:
         logger.info("Socket check disabled via DISABLE_SOCKET_CHECK")
@@ -651,7 +640,7 @@ def get_lease():
 
 def create_lease():
     """Create new lease object."""
-    from kubernetes.client import V1Lease, V1ObjectMeta, V1LeaseSpec
+    from kubernetes.client import V1Lease, V1LeaseSpec, V1ObjectMeta
 
     now = datetime.now(timezone.utc).isoformat()
     lease = V1Lease(
@@ -690,16 +679,15 @@ def try_acquire_leader() -> bool:
     global current_leadership_state
 
     # Check cluster-wide forge management first (extension)
-    if CLUSTER_MANAGEMENT_AVAILABLE:
-        allowed, reason = cluster_manager.should_allow_local_leadership()
-        if not allowed:
-            logger.info(f"Local leadership blocked by cluster management: {reason}")
-            # Ensure we're not leader if cluster blocks us
-            if current_leadership_state:
-                current_leadership_state = False
-                ensure_secrets(is_leader=False)
-                update_metrics(is_leader=False)
-            return False
+    allowed, reason = cluster_manager.should_allow_local_leadership()
+    if not allowed:
+        logger.info(f"Local leadership blocked by cluster management: {reason}")
+        # Ensure we're not leader if cluster blocks us
+        if current_leadership_state:
+            current_leadership_state = False
+            ensure_secrets(is_leader=False)
+            update_metrics(is_leader=False)
+        return False
 
     try:
         lease = get_lease()
@@ -728,7 +716,6 @@ def try_acquire_leader() -> bool:
 
             try:
                 patch_lease(lease)
-                new_leader = True
 
                 # Log leadership transition
                 if old_holder != POD_NAME:
@@ -744,13 +731,10 @@ def try_acquire_leader() -> bool:
 
             except ApiException as e:
                 if e.status == 409:  # Conflict - someone else got it
-                    logger.debug(f"Failed to acquire lease due to conflict (409)")
-                    new_leader = False
+                    logger.debug("Failed to acquire lease due to conflict (409)")
                 else:
                     logger.error(f"Unexpected error acquiring lease: {e}")
                     raise
-        else:
-            new_leader = False
 
         # Check if we lost leadership
         if current_leadership_state and holder != POD_NAME:
@@ -887,10 +871,9 @@ def main():
             ensure_secrets(is_leader=False)
 
         # Stop cluster management
-        if CLUSTER_MANAGEMENT_AVAILABLE:
-            cluster_mgr = cluster_manager.get_cluster_manager()
-            if cluster_mgr:
-                cluster_mgr.stop()
+        cluster_mgr = cluster_manager.get_cluster_manager()
+        if cluster_mgr:
+            cluster_mgr.stop()
 
         logger.info("Cardano Forge Manager shutdown complete")
 

@@ -295,7 +295,6 @@ class TestClusterForgeIntegration(unittest.TestCase):
         """Set up integration test environment."""
         self.mock_api = Mock()
     
-    @patch('cluster_manager.CLUSTER_MANAGEMENT_AVAILABLE', True)
     @patch('cluster_manager.cluster_manager')
     def test_forgemanager_cluster_integration(self, mock_cluster_module):
         """Test integration between forge manager and cluster management."""
