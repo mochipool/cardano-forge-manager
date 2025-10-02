@@ -635,6 +635,247 @@ stateDiagram-v2
 - [ ] RBAC includes permissions for CardanoForgeCluster CRD access
 - [ ] Configuration supports cluster identification and priority settings
 
+## 5. Multi-Tenant Support: Network and Pool Isolation
+
+### 5.1 Overview
+
+SPOs often run multiple stake pools across different Cardano networks (mainnet, preprod, preview) and potentially different applications within the same Kubernetes cluster. The forge management system must support multi-tenant deployments with proper isolation to prevent cross-contamination between different pools, networks, and applications.
+
+### 5.2 Functional Requirements
+
+#### 5.2.1 Unique Identification System
+
+**Pool-Based Identification (Primary)**
+- Each deployment MUST be uniquely identified by its pool ID (hex format)
+- Pool ID serves as the most granular and unique identifier
+- Format: `pool1abcd...xyz` (Bech32) or equivalent hex representation
+- Pool ID MUST be immutable for a given deployment
+
+**Network-Based Classification**
+- Each deployment MUST specify its target Cardano network
+- Supported networks: `mainnet`, `preprod`, `preview`, `custom`
+- Custom networks support arbitrary network magic numbers
+- Network isolation prevents cross-network leader election conflicts
+
+**Application-Based Grouping (Optional)**
+- Support for different application types within the same network
+- Examples: `block-producer`, `relay-only`, `monitoring`
+- Application type affects resource allocation and monitoring but not leadership
+
+#### 5.2.2 Isolation Requirements
+
+**Leadership Isolation**
+- Leadership election MUST be scoped to: `network + pool`
+- Pools on different networks MUST NOT interfere with each other
+- Pools within the same network MUST be completely isolated
+- Cross-pool leader election MUST be impossible
+
+**CRD Namespacing**
+- CardanoForgeCluster CRDs MUST include network and pool identifiers
+- CRD names MUST follow pattern: `{network}-{pool-id-short}-{region}`
+- Example: `mainnet-pool1abcd-us-east-1`
+- CRD labels MUST include network, pool, and application metadata
+
+**Configuration Isolation**
+- Each pool deployment MUST have independent configuration
+- Secrets (KES, VRF, OpCert) MUST be scoped per pool
+- Health check endpoints MUST be pool-specific
+- Metrics MUST include network and pool labels
+
+#### 5.2.3 Multi-Tenant Deployment Patterns
+
+**Pattern 1: Multi-Network Single Pool**
+```
+Namespace: spo-operations
+├── mainnet-pool1abcd-deployment (StatefulSet)
+├── preprod-pool1abcd-deployment (StatefulSet)
+└── preview-pool1abcd-deployment (StatefulSet)
+```
+
+**Pattern 2: Multi-Pool Single Network**
+```
+Namespace: spo-operations
+├── mainnet-pool1abcd-deployment (StatefulSet)
+├── mainnet-pool1efgh-deployment (StatefulSet)
+└── mainnet-pool1ijkl-deployment (StatefulSet)
+```
+
+**Pattern 3: Mixed Multi-Tenant**
+```
+Namespace: spo-operations
+├── mainnet-pool1abcd-deployment (Primary pool, mainnet)
+├── mainnet-pool1efgh-deployment (Secondary pool, mainnet)
+├── preprod-pool1abcd-deployment (Testing, preprod)
+└── preview-pool1abcd-deployment (Development, preview)
+```
+
+### 5.3 Technical Requirements
+
+#### 5.3.1 Environment Variables
+
+**Required Variables (Pool-Specific)**
+- `CARDANO_NETWORK`: Target network (`mainnet`, `preprod`, `preview`, `custom`)
+- `POOL_ID`: Unique pool identifier (bech32 or hex format)
+- `POOL_ID_HEX`: Pool ID in hex format (for internal processing)
+- `NETWORK_MAGIC`: Network magic number (for custom networks)
+
+**Optional Variables (Application-Specific)**
+- `APPLICATION_TYPE`: Application classification (`block-producer`, `relay-only`)
+- `POOL_NAME`: Human-readable pool name (for monitoring/labeling)
+- `POOL_TICKER`: Pool ticker symbol (if applicable)
+
+#### 5.3.2 CRD Schema Extensions
+
+**Metadata Enhancements**
+```yaml
+metadata:
+  name: mainnet-pool1abcd-us-east-1
+  labels:
+    cardano.io/network: mainnet
+    cardano.io/pool-id: pool1abcd...xyz
+    cardano.io/pool-id-hex: abcd...xyz
+    cardano.io/application: block-producer
+    cardano.io/region: us-east-1
+spec:
+  network:
+    name: mainnet
+    magic: 764824073
+  pool:
+    id: pool1abcd...xyz
+    idHex: abcd...xyz
+    name: "My Stake Pool"
+    ticker: "MYPOOL"
+  application:
+    type: block-producer
+```
+
+**Status Isolation**
+```yaml
+status:
+  networkStatus:
+    network: mainnet
+    syncStatus: synced
+    tipSlot: 12345678
+  poolStatus:
+    poolId: pool1abcd...xyz
+    activeStake: "1000000000000"
+    delegatorCount: 150
+    lastBlockProduced: "2024-10-02T08:00:00Z"
+```
+
+#### 5.3.3 Metrics Enhancements
+
+**Multi-Dimensional Labels**
+```prometheus
+# Existing metrics with additional labels
+cardano_forging_enabled{pod="cardano-bp-0", network="mainnet", pool_id="pool1abcd", application="block-producer"} 1
+cardano_cluster_forge_enabled{cluster="us-east-1", network="mainnet", pool_id="pool1abcd"} 1
+
+# New multi-tenant specific metrics
+cardano_network_pool_count{network="mainnet"} 3
+cardano_application_pool_count{application="block-producer", network="mainnet"} 2
+cardano_pool_leadership_changes_total{network="mainnet", pool_id="pool1abcd"} 15
+```
+
+### 5.4 Edge Cases and Constraints
+
+#### 5.4.1 Pool ID Validation
+- Pool IDs MUST be validated against Cardano bech32 format
+- Hex conversion MUST be consistent and reversible
+- Invalid pool IDs MUST cause deployment failure with clear error messages
+- Pool ID uniqueness MUST be enforced within the same network
+
+#### 5.4.2 Network Magic Validation
+- Network magic MUST match the specified network type
+- Custom networks MUST provide valid magic numbers
+- Magic number conflicts MUST be detected and prevented
+- Network type changes MUST trigger deployment recreation
+
+#### 5.4.3 Cross-Tenant Isolation
+- Leadership decisions MUST NOT be influenced by other pools/networks
+- Health checks MUST be scoped to specific pool deployments
+- CRD watchers MUST filter events by network and pool
+- Metrics MUST be properly labeled to prevent aggregation errors
+
+#### 5.4.4 Resource Conflicts
+- Multiple pools in the same cluster MUST use different ports
+- Secret names MUST include pool identifier to prevent conflicts
+- ConfigMaps MUST be pool-specific
+- Service names MUST be unique per pool
+
+### 5.5 Operational Scenarios
+
+#### 5.5.1 Multi-Pool Mainnet Operation
+```
+SPO runs 3 mainnet pools in us-east-1:
+- pool1abcd (priority 1, primary)
+- pool1efgh (priority 2, secondary)  
+- pool1ijkl (priority 3, tertiary)
+
+Each pool operates independently:
+- Independent leader election
+- Separate health monitoring
+- Isolated credential management
+- Individual failover decisions
+```
+
+#### 5.5.2 Cross-Network Testing
+```
+SPO tests mainnet pool configuration on testnet:
+- mainnet-pool1abcd (production)
+- preprod-pool1abcd (testing)
+- preview-pool1abcd (development)
+
+Each network deployment:
+- Uses same pool credentials (for testing)
+- Independent cluster management
+- Network-specific health endpoints
+- Separate monitoring dashboards
+```
+
+#### 5.5.3 Gradual Migration
+```
+SPO migrates from single-pool to multi-pool:
+1. Deploy second pool: mainnet-pool1efgh
+2. Test cluster coordination
+3. Configure priority ordering
+4. Enable production traffic
+5. Monitor both pools independently
+```
+
+### 5.6 Acceptance Criteria
+
+**Multi-Tenant Isolation**
+- [ ] Pools on the same network operate completely independently
+- [ ] Cross-network deployments do not interfere with each other
+- [ ] Pool ID validation prevents invalid configurations
+- [ ] CRD names include network and pool identifiers
+- [ ] Metrics include network and pool labels
+
+**Configuration Management**
+- [ ] Environment variables support network and pool specification
+- [ ] Secrets are properly scoped per pool
+- [ ] Health check endpoints are pool-specific
+- [ ] Resource conflicts are prevented automatically
+
+**Operational Safety**
+- [ ] Leadership election is scoped to network + pool
+- [ ] Cross-pool leader election is impossible
+- [ ] Network magic validation prevents misconfigurations
+- [ ] Pool ID changes trigger appropriate warnings/errors
+
+**Monitoring and Observability**
+- [ ] Metrics are properly labeled with network and pool information
+- [ ] Dashboards can filter by network and pool
+- [ ] Alerts are scoped to specific pools
+- [ ] Logging includes pool and network context
+
+**Backward Compatibility**
+- [ ] Existing single-pool deployments continue to work
+- [ ] Migration path from single-pool to multi-pool is clear
+- [ ] Default values maintain current behavior
+- [ ] Breaking changes are clearly documented
+
 ---
 
 ## Next Steps

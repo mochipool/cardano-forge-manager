@@ -23,7 +23,7 @@ from kubernetes.client.rest import ApiException
 from prometheus_client import Counter, Gauge, Info, start_http_server
 
 # Cluster management (extension)
-from . import cluster_manager
+import cluster_manager
 
 # -----------------------------
 # Environment variables
@@ -63,6 +63,15 @@ TARGET_OP_CERT = os.environ.get("TARGET_OP_CERT", "/opt/cardano/secrets/node.cer
 # Process discovery
 CARDANO_NODE_PROCESS_NAME = os.environ.get("CARDANO_NODE_PROCESS_NAME", "cardano-node")
 
+# Multi-tenant configuration (for cluster manager integration)
+CARDANO_NETWORK = os.environ.get("CARDANO_NETWORK", "mainnet")
+POOL_ID = os.environ.get("POOL_ID", "")
+POOL_ID_HEX = os.environ.get("POOL_ID_HEX", "")
+POOL_NAME = os.environ.get("POOL_NAME", "")
+POOL_TICKER = os.environ.get("POOL_TICKER", "")
+NETWORK_MAGIC = int(os.environ.get("NETWORK_MAGIC", "764824073"))  # Default to mainnet
+APPLICATION_TYPE = os.environ.get("APPLICATION_TYPE", "block-producer")
+
 # -----------------------------
 # Logging Setup
 # -----------------------------
@@ -76,10 +85,14 @@ logger = logging.getLogger("cardano-forge-manager")
 # Prometheus Metrics
 # -----------------------------
 forging_enabled = Gauge(
-    "cardano_forging_enabled", "Whether this pod is actively forging blocks", ["pod"]
+    "cardano_forging_enabled",
+    "Whether this pod is actively forging blocks",
+    ["pod", "network", "pool_id", "application"],
 )
 leader_status = Gauge(
-    "cardano_leader_status", "Whether this pod is the elected leader", ["pod"]
+    "cardano_leader_status",
+    "Whether this pod is the elected leader",
+    ["pod", "network", "pool_id", "application"],
 )
 leadership_changes_total = Counter(
     "cardano_leadership_changes_total", "Total number of leadership transitions"
@@ -98,20 +111,30 @@ info_metric = Info(
     "cardano_forge_manager_info", "Information about the forge manager instance"
 )
 
-# Cluster-wide metrics (extension)
+# Cluster-wide metrics (extension) - updated for multi-tenant support
 cluster_forge_enabled = Gauge(
     "cardano_cluster_forge_enabled",
     "Whether this cluster is enabled for forging",
-    ["cluster", "region"],
+    ["cluster", "region", "network", "pool_id"],
 )
 cluster_forge_priority = Gauge(
     "cardano_cluster_forge_priority",
     "Effective priority of this cluster for forging",
-    ["cluster", "region"],
+    ["cluster", "region", "network", "pool_id"],
 )
 
-# Initialize info metric
-info_metric.info({"pod_name": POD_NAME, "namespace": NAMESPACE, "version": "1.0.0"})
+# Initialize info metric with multi-tenant information
+info_metric.info(
+    {
+        "pod_name": POD_NAME,
+        "namespace": NAMESPACE,
+        "version": "2.0.0",
+        "network": CARDANO_NETWORK,
+        "pool_id": POOL_ID or "unknown",
+        "pool_ticker": POOL_TICKER or "unknown",
+        "application_type": APPLICATION_TYPE,
+    }
+)
 
 # -----------------------------
 # Kubernetes Client Setup
@@ -424,18 +447,38 @@ def update_leader_status(is_leader: bool):
 
 def update_metrics(is_leader: bool):
     """Update Prometheus metrics with current state."""
-    leader_status.labels(pod=POD_NAME).set(1 if is_leader else 0)
-    forging_enabled.labels(pod=POD_NAME).set(1 if is_leader else 0)
+    # Use multi-tenant labels
+    pool_id_short = POOL_ID[:10] if POOL_ID else "unknown"
+    labels = {
+        "pod": POD_NAME,
+        "network": CARDANO_NETWORK,
+        "pool_id": pool_id_short,
+        "application": APPLICATION_TYPE,
+    }
+
+    leader_status.labels(**labels).set(1 if is_leader else 0)
+    forging_enabled.labels(**labels).set(1 if is_leader else 0)
 
     # Update cluster-wide metrics if available
     cluster_metrics = cluster_manager.get_cluster_metrics()
     if cluster_metrics.get("enabled", False):
         cluster_id = cluster_metrics.get("cluster_id", "unknown")
         region = cluster_metrics.get("region", "unknown")
-        cluster_forge_enabled.labels(cluster=cluster_id, region=region).set(
+        network = cluster_metrics.get("network", "unknown")
+        pool_id = cluster_metrics.get("pool_id", "unknown")
+        pool_id_short = pool_id[:10] if pool_id and pool_id != "unknown" else "unknown"
+
+        cluster_labels = {
+            "cluster": cluster_id,
+            "region": region,
+            "network": network,
+            "pool_id": pool_id_short,
+        }
+
+        cluster_forge_enabled.labels(**cluster_labels).set(
             1 if cluster_metrics.get("forge_enabled", False) else 0
         )
-        cluster_forge_priority.labels(cluster=cluster_id, region=region).set(
+        cluster_forge_priority.labels(**cluster_labels).set(
             cluster_metrics.get("effective_priority", 999)
         )
 

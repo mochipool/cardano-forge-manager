@@ -1,0 +1,90 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cardano-node
+  namespace: cardano
+  labels:
+    app: cardano-node
+    component: block-producer
+spec:
+  serviceName: cardano-node
+  replicas: 3
+  selector:
+    matchLabels:
+      app: cardano-node
+      component: block-producer
+  template:
+    metadata:
+      labels:
+        app: cardano-node
+        component: block-producer
+    spec:
+      containers:
+      - name: cardano-node
+        image: inputoutput/cardano-node:latest
+        ports:
+        - containerPort: 3001
+          name: node-port
+        - containerPort: 12798
+          name: metrics
+        env:
+        - name: CARDANO_NODE_SOCKET_PATH
+          value: "/opt/cardano/db/node.socket"
+        volumeMounts:
+        - name: db
+          mountPath: /opt/cardano/db
+        - name: config
+          mountPath: /opt/cardano/config
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "1000m"
+          limits:
+            memory: "8Gi"
+            cpu: "2000m"
+        
+      - name: forge-manager
+        image: cardano-forge-manager:latest
+        env:
+        # Core configuration
+        - name: ENABLE_CLUSTER_MANAGEMENT
+          value: "true"
+        - name: CLUSTER_IDENTIFIER
+          value: "mainnet-pool-us-east-1"
+        - name: CLUSTER_REGION
+          value: "us-east-1"
+        - name: CLUSTER_ENVIRONMENT
+          value: "production"
+        - name: CLUSTER_PRIORITY
+          value: "10"
+        # Health check configuration
+        - name: HEALTH_CHECK_ENDPOINT
+          value: "http://localhost:12798/health"
+        - name: HEALTH_CHECK_INTERVAL
+          value: "30"
+        # Logging
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+            
+      volumes:
+      - name: config
+        configMap:
+          name: cardano-node-config
+          
+  volumeClaimTemplates:
+  - metadata:
+      name: db
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 100Gi

@@ -1,3 +1,475 @@
+# Cardano Forge Manager
+
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Build Status](https://github.com/mochipool/cardano-forge-manager/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/mochipool/cardano-forge-manager/actions/workflows/build.yml)
+[![Python](https://img.shields.io/badge/Python-3.13+-yellow.svg)](https://python.org)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.25+-blue.svg)](https://kubernetes.io)
+
+> **Intelligent, cluster-aware block production management for Cardano Stake Pool Operators**
+
+The Cardano Forge Manager provides advanced cluster-wide coordination for Cardano node deployments in Kubernetes environments. It supports both traditional single-tenant deployments and modern multi-tenant architectures, enabling efficient resource utilization while maintaining strict isolation between different networks, pools, and applications.
+
+## 🚀 Features
+
+### Core Capabilities
+- **Cluster-Aware Leadership**: Hierarchical leadership election with local StatefulSet coordination and cluster-wide decision making
+- **Dynamic Forge Management**: Real-time enable/disable of block production without pod restarts
+- **Health-Based Decisions**: Integrated health checking with configurable endpoints and failure thresholds
+- **Multi-Tenant Support**: Run multiple independent pools across different Cardano networks in a single cluster
+
+### Multi-Tenant Features ✨
+- **Pool Isolation**: Complete isolation between different stake pools
+- **Network Support**: Simultaneous operation across mainnet, preprod, preview, and custom networks
+- **Application Types**: Support for block-producer, relay, and monitoring applications
+- **Resource Naming**: Intelligent resource naming with tenant-aware cluster and lease names
+- **Multi-Dimensional Metrics**: Enhanced observability with network, pool, and application labels
+- **Backward Compatibility**: Seamless upgrade path from single-tenant deployments
+
+## 📋 Quick Start
+
+### Prerequisites
+- Kubernetes cluster (1.19+)
+- Python 3.8+
+- Cardano node deployment (as StatefulSet)
+- kubectl access to the cluster
+
+### Basic Installation
+
+1. **Clone the repository**:
+```bash
+git clone https://github.com/your-repo/cardano-forge-manager.git
+cd cardano-forge-manager/cluster-aware-forging
+```
+
+2. **Install dependencies**:
+```bash
+make install
+```
+
+3. **Run tests**:
+```bash
+make test
+```
+
+4. **Deploy to Kubernetes**:
+```bash
+# Single-tenant deployment (legacy mode)
+kubectl apply -f examples/single-tenant/
+
+# Multi-tenant deployment
+kubectl apply -f examples/multi-tenant/
+```
+
+### Single-Tenant Deployment (Legacy Mode)
+
+For existing single-tenant deployments, minimal configuration is required:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cardano-node
+spec:
+  template:
+    spec:
+      containers:
+      - name: forge-manager
+        image: cardano-forge-manager:latest
+        env:
+        - name: ENABLE_CLUSTER_MANAGEMENT
+          value: "true"
+        - name: CLUSTER_IDENTIFIER
+          value: "mainnet-pool-us-east-1"
+        - name: CLUSTER_REGION
+          value: "us-east-1"
+        - name: HEALTH_CHECK_ENDPOINT
+          value: "http://localhost:12798/health"
+```
+
+### Multi-Tenant Deployment
+
+For new multi-tenant deployments, specify the pool and network information:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cardano-node-pool1
+spec:
+  template:
+    spec:
+      containers:
+      - name: forge-manager
+        image: cardano-forge-manager:latest
+        env:
+        - name: ENABLE_CLUSTER_MANAGEMENT
+          value: "true"
+        # Multi-tenant configuration
+        - name: POOL_ID
+          value: "pool1abcdefghijklmnopqrstuvwxyz1234567890abcdefghij"
+        - name: CARDANO_NETWORK
+          value: "mainnet"
+        - name: NETWORK_MAGIC
+          value: "764824073"
+        - name: POOL_TICKER
+          value: "MYPOOL"
+        - name: APPLICATION_TYPE
+          value: "block-producer"
+        # Regional configuration
+        - name: CLUSTER_REGION
+          value: "us-east-1"
+        - name: HEALTH_CHECK_ENDPOINT
+          value: "http://localhost:12798/health"
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+
+#### Multi-Tenant Variables
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `POOL_ID` | Multi-tenant | - | Unique pool identifier (any string) |
+| `CARDANO_NETWORK` | Multi-tenant | `mainnet` | Network name (mainnet, preprod, preview, custom) |
+| `NETWORK_MAGIC` | Multi-tenant | `764824073` | Network magic number |
+| `POOL_ID_HEX` | Optional | - | Hex representation of pool ID |
+| `POOL_NAME` | Optional | - | Human-readable pool name |
+| `POOL_TICKER` | Optional | - | Pool ticker symbol |
+| `APPLICATION_TYPE` | Optional | `block-producer` | Application type |
+
+#### Core Variables
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ENABLE_CLUSTER_MANAGEMENT` | Yes | `false` | Enable cluster management |
+| `CLUSTER_REGION` | Yes | `unknown` | Geographic region |
+| `HEALTH_CHECK_ENDPOINT` | Optional | - | Health check HTTP endpoint |
+| `HEALTH_CHECK_INTERVAL` | Optional | `30` | Health check interval (seconds) |
+
+#### Legacy Variables (Single-Tenant)
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `CLUSTER_IDENTIFIER` | Legacy | hostname | Legacy cluster identifier |
+| `CLUSTER_ENVIRONMENT` | Legacy | `production` | Environment name |
+| `CLUSTER_PRIORITY` | Legacy | `100` | Leadership priority |
+
+### Configuration Examples
+
+#### Multi-Pool Mainnet Deployment
+```bash
+# Pool 1 - Block Producer
+ENABLE_CLUSTER_MANAGEMENT=true
+POOL_ID=POOL1
+CARDANO_NETWORK=mainnet
+NETWORK_MAGIC=764824073
+POOL_TICKER=POOL1
+APPLICATION_TYPE=block-producer
+CLUSTER_REGION=us-east-1
+
+# Pool 2 - Block Producer  
+ENABLE_CLUSTER_MANAGEMENT=true
+POOL_ID=POOL2
+CARDANO_NETWORK=mainnet
+NETWORK_MAGIC=764824073
+POOL_TICKER=POOL2
+APPLICATION_TYPE=block-producer
+CLUSTER_REGION=us-east-1
+```
+
+#### Multi-Network Deployment
+```bash
+# Mainnet Pool
+POOL_ID=MYPOOL
+CARDANO_NETWORK=mainnet
+NETWORK_MAGIC=764824073
+
+# Preprod Pool (same pool ID, different network)
+POOL_ID=MYPOOL
+CARDANO_NETWORK=preprod
+NETWORK_MAGIC=1
+```
+
+#### Custom Network
+```bash
+POOL_ID=TESTPOOL
+CARDANO_NETWORK=custom-testnet
+NETWORK_MAGIC=12345
+APPLICATION_TYPE=relay
+```
+
+## 📊 Monitoring and Observability
+
+### Metrics
+
+The Forge Manager exports Prometheus-compatible metrics with multi-tenant labels:
+
+#### Core Metrics
+- `cardano_forge_cluster_enabled`: Cluster management status
+- `cardano_forge_leadership_active`: Current leadership status
+- `cardano_forge_health_status`: Health check results
+- `cardano_forge_priority`: Current effective priority
+
+#### Multi-Tenant Labels
+All metrics include the following labels when in multi-tenant mode:
+- `cardano_network`: Network name (mainnet, preprod, etc.)
+- `pool_id`: Pool identifier
+- `pool_ticker`: Pool ticker symbol
+- `application_type`: Application type
+- `cluster_region`: Geographic region
+
+#### Example Queries
+```promql
+# Leadership status by pool
+cardano_forge_leadership_active{pool_id="MYPOOL"}
+
+# Health status by network
+cardano_forge_health_status{cardano_network="mainnet"}
+
+# All mainnet pools
+cardano_forge_cluster_enabled{cardano_network="mainnet"}
+```
+
+### Health Checks
+
+Configure health check integration:
+
+```bash
+# Basic health check
+HEALTH_CHECK_ENDPOINT=http://localhost:12798/health
+
+# Custom interval
+HEALTH_CHECK_INTERVAL=60
+
+# Health check affects leadership eligibility
+# Failed health checks (3+ consecutive) prevent leadership
+```
+
+### Logging
+
+Structured logging with multi-tenant context:
+
+```json
+{
+  "timestamp": "2024-01-02T10:30:00Z",
+  "level": "INFO",
+  "message": "Cluster manager initialized",
+  "cluster_id": "mainnet-MYPOOL-us-east-1", 
+  "network": "mainnet",
+  "pool_id": "MYPOOL",
+  "region": "us-east-1"
+}
+```
+
+## 🏗️ Architecture
+
+### Multi-Tenant Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Kubernetes Cluster                                              │
+│ ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
+│ │ Pool 1 Mainnet  │  │ Pool 1 Preprod  │  │ Pool 2 Mainnet  │  │
+│ │ StatefulSet     │  │ StatefulSet     │  │ StatefulSet     │  │
+│ │ ┌─────────────┐ │  │ ┌─────────────┐ │  │ ┌─────────────┐ │  │
+│ │ │ Local       │ │  │ │ Local       │ │  │ │ Local       │ │  │
+│ │ │ Leadership  │ │  │ │ Leadership  │ │  │ │ Leadership  │ │  │
+│ │ └─────────────┘ │  │ └─────────────┘ │  │ └─────────────┘ │  │
+│ └─────────────────┘  └─────────────────┘  └─────────────────┘  │
+│           │                    │                    │          │
+│           ▼                    ▼                    ▼          │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ CardanoForgeCluster CRDs (Per Pool/Network)                │ │
+│ │ - mainnet-POOL1-us-east-1                                  │ │
+│ │ - preprod-POOL1-us-east-1                                  │ │
+│ │ - mainnet-POOL2-us-east-1                                  │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Resource Naming Convention
+
+- **Cluster Names**: `{network}-{pool_short}-{region}`
+  - Example: `mainnet-MYPOOL-us-east-1`
+- **Lease Names**: `cardano-leader-{network}-{pool_short}`
+  - Example: `cardano-leader-mainnet-MYPOOL`
+- **CRD Names**: Same as cluster names for uniqueness
+
+### Leadership Election Flow
+
+1. **Local Leadership**: StatefulSet pods elect local leader
+2. **Cluster Coordination**: Local leaders coordinate via CRD
+3. **Health Integration**: Health failures affect leadership eligibility
+4. **Multi-Tenant Isolation**: Each pool/network combination is independent
+
+## 🔄 Migration Guide
+
+### From Single-Tenant to Multi-Tenant
+
+1. **Identify Current Configuration**:
+```bash
+# Current single-tenant setup
+CLUSTER_IDENTIFIER=mainnet-pool-us-east-1
+ENABLE_CLUSTER_MANAGEMENT=true
+```
+
+2. **Add Multi-Tenant Configuration**:
+```bash
+# Add pool identification
+POOL_ID=MYPOOL
+CARDANO_NETWORK=mainnet
+NETWORK_MAGIC=764824073
+POOL_TICKER=MYPOOL
+
+# Keep existing configuration
+CLUSTER_REGION=us-east-1
+ENABLE_CLUSTER_MANAGEMENT=true
+```
+
+3. **Deploy Updated Configuration**:
+```bash
+kubectl apply -f updated-deployment.yaml
+```
+
+4. **Verify Migration**:
+```bash
+# Check new cluster name format
+kubectl get cardanoforgeclusters
+
+# Verify metrics labels
+curl http://pod-ip:8080/metrics | grep cardano_network
+```
+
+## 🧪 Development
+
+### Setup Development Environment
+
+```bash
+# Create virtual environment
+make venv
+
+# Install dependencies
+make install
+
+# Run tests
+make test
+
+# Run with coverage
+make test-coverage
+
+# Lint code
+make lint
+```
+
+### Running Tests
+
+```bash
+# All tests
+make test
+
+# Unit tests only
+make test-unit
+
+# Multi-tenant tests
+make test-multi-tenant
+
+# Integration tests (requires K8s cluster)
+make test-integration
+
+# Specific test
+python -m pytest tests/test_cluster_management.py::TestMultiTenantSupport::test_pool_isolation -v
+```
+
+### Project Structure
+
+```
+cluster-aware-forging/
+├── src/                          # Source code
+│   ├── forgemanager.py          # Main forge manager
+│   └── cluster_manager.py       # Cluster coordination
+├── tests/                        # Test suite
+│   ├── test_forgemanager.py     # Forge manager tests
+│   └── test_cluster_management.py # Cluster management tests
+├── examples/                     # Deployment examples
+│   ├── single-tenant/           # Legacy examples
+│   └── multi-tenant/            # Multi-tenant examples
+├── docs/                        # Documentation
+│   ├── FUNCTIONAL_REQUIREMENTS.md
+│   ├── STATEFULSET_COORDINATION.md
+│   └── *.md                     # Other documentation
+├── Makefile                     # Development automation
+├── requirements.txt             # Python dependencies
+└── README.md                    # This file
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Add tests for new functionality
+5. Run the test suite (`make test`)
+6. Commit your changes (`git commit -m 'Add amazing feature'`)
+7. Push to the branch (`git push origin feature/amazing-feature`)
+8. Open a Pull Request
+
+### Code Standards
+
+- Python 3.8+ compatibility
+- PEP 8 style guidelines
+- Minimum 80% test coverage
+- Comprehensive documentation for new features
+- Multi-tenant compatibility for all new features
+
+## 📚 Documentation
+
+### Architecture Documentation
+- [Functional Requirements](docs/FUNCTIONAL_REQUIREMENTS.md) - Detailed requirements and acceptance criteria
+- [StatefulSet Coordination](docs/STATEFULSET_COORDINATION.md) - Architecture deep dive
+- [System Overview](docs/SYSTEM_OVERVIEW.md) - High-level system design
+
+### Implementation Documentation  
+- [Multi-Tenant Implementation](docs/MULTI_TENANT_IMPLEMENTATION.md) - Multi-tenant design details
+- [Multi-Tenant Tests](docs/MULTI_TENANT_TESTS_SUMMARY.md) - Test implementation summary
+- [Health Check Integration](docs/HEALTH_CHECK_ENDPOINT.md) - Health check details
+
+### Operational Documentation
+- [Operations Guide](docs/OPERATIONS.md) - Deployment and operations
+- [Testing Guide](docs/TESTING.md) - Testing procedures
+- [Test Results](docs/TEST_RESULTS_SUMMARY.md) - Latest test results
+
+## 🔒 Security
+
+### Security Considerations
+
+- **Tenant Isolation**: Complete isolation between different pools and networks
+- **RBAC Integration**: Kubernetes role-based access control support
+- **Secret Management**: Support for Kubernetes secrets for sensitive data
+- **Network Policies**: Recommended network policies for enhanced isolation
+
+### Reporting Security Issues
+
+Please report security vulnerabilities to [security@yourcompany.com](mailto:security@yourcompany.com). Do not open public GitHub issues for security problems.
+
+## 📄 License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Cardano Community for requirements and feedback
+- Kubernetes SIG-Apps for StatefulSet best practices
+- IOG (Input Output Global) for Cardano node specifications
+
+## 📞 Support
+
+- **Documentation**: [docs/](docs/)
+- **Issues**: [GitHub Issues](https://github.com/your-repo/cardano-forge-manager/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/your-repo/cardano-forge-manager/discussions)
+- **Chat**: [Discord/Slack Channel](#)
+
+---
+
+**Built with ❤️ for the Cardano ecosystem**
+
 # 🚀 Cardano Forge Manager
 
 <div align="center">
