@@ -22,7 +22,7 @@ This document describes the requirements, architecture, and edge cases for such 
 ## Non-Goals
 - Managing or automating key rotation.  
 - Running Cardano relays (covered separately).  
-- Cross-cluster failover (focus is within one Kubernetes cluster).  
+~~- Cross-cluster failover (focus is within one Kubernetes cluster).~~ **[UPDATED]** - See FR9 below for cluster-wide forge management.
 
 ---
 
@@ -53,6 +53,116 @@ This document describes the requirements, architecture, and edge cases for such 
    - Forging credentials stored only in Kubernetes `Secret`.  
    - Sidecar writes them only into the pod it manages.  
    - RBAC restricted to minimal permissions.
+9. **Cluster-wide forge management** *(Extension)*:
+   - Ability to globally enable/disable forging across all clusters for an SPO.
+   - Support for multi-region deployments with manual failover capability.
+   - Kubernetes-native management using CRD-based controls.
+   - Cluster priority system for automated failover ordering.
+   - Clear observability of which cluster/region is actively forging.
+
+---
+
+## Cluster-Wide Forge Management (Extension)
+
+### Overview
+Stake Pool Operators (SPOs) running multi-region deployments require the ability to control forging at a global level across all their Kubernetes clusters. This enables manual failover between regions, maintenance windows, and coordinated disaster recovery.
+
+### Functional Requirements
+
+#### FR9.1 - Global Forge Control CRD
+- **CardanoForgeCluster CRD** manages forge state at cluster level
+- Cluster-scoped resource that overrides local CardanoLeader behavior
+- Supports states: `Enabled`, `Disabled`, `Priority-based`
+- Contains cluster identification, priority, and region information
+
+#### FR9.2 - Hierarchical Decision Making
+- Local CardanoLeader CRDs check CardanoForgeCluster state before forging
+- Priority order: `CardanoForgeCluster.Disabled` > `CardanoForgeCluster.Priority` > `CardanoLeader`
+- If cluster forge is disabled, no local leaders can forge regardless of lease status
+
+#### FR9.3 - Cross-Cluster Priority System
+- Clusters assigned priority levels (1=highest, 999=lowest)
+- Only highest priority "enabled" cluster should have active forging
+- Priority ties broken by cluster creation timestamp
+- Supports manual priority override for failover
+
+#### FR9.4 - Regional Failover Support
+- Clusters tagged with region/zone labels
+- Manual failover by updating cluster priorities
+- Automated failover based on cluster health checks (optional)
+- Gradual transition support to minimize forging gaps
+
+#### FR9.5 - Observability and Control
+- Metrics: `cardano_cluster_forge_enabled{cluster="...", region="..."}` (1 or 0)
+- Metrics: `cardano_cluster_forge_priority{cluster="..."}` (priority number)
+- CRD status shows effective forge state and reasons
+- Integration with existing pod-level metrics
+
+### Edge Cases & Failure Modes
+
+#### EC12 - Cross-Cluster Communication Failure
+- **Problem:** Clusters cannot communicate to coordinate priority
+- **Mitigation:** Each cluster makes independent decisions based on local CRD state
+- **Impact:** Temporary split-brain possible during network partition
+- **Detection:** Monitor for multiple clusters showing `cardano_cluster_forge_enabled=1`
+
+#### EC13 - CRD Synchronization Lag
+- **Problem:** CardanoForgeCluster updates don't propagate instantly to all pods
+- **Mitigation:** Implement CRD watch with backoff retry
+- **Grace Period:** Allow 30s for CRD changes to propagate before alerting
+- **Fallback:** Default to disabled state if CRD cannot be read
+
+#### EC14 - Priority Conflict Resolution
+- **Problem:** Multiple clusters configured with same priority
+- **Mitigation:** Use cluster creation timestamp as tiebreaker
+- **Detection:** Log priority conflicts at startup
+- **Manual Override:** Explicit priority assignment overrides automatic resolution
+
+#### EC15 - Cluster Health vs Priority Mismatch
+- **Problem:** Highest priority cluster is unhealthy but still enabled
+- **Mitigation:** Health checks influence effective priority calculation
+- **Manual Override:** SPO can force failover by changing priorities
+- **Automation:** Optional automated failover based on configurable health thresholds
+
+#### EC16 - Global Disable Race Conditions
+- **Problem:** Global disable command reaches different clusters at different times
+- **Mitigation:** Each cluster disables forging immediately upon receiving disable command
+- **Safety:** Prefer temporary no-forging over dual-forging during transitions
+- **Recovery:** Re-enable follows priority order with staggered timing
+
+### Example CRD Structure
+
+```yaml
+apiVersion: cardano.io/v1
+kind: CardanoForgeCluster
+metadata:
+  name: us-west-2-prod
+  labels:
+    cardano.io/region: us-west-2
+    cardano.io/environment: production
+spec:
+  forgeState: Enabled  # Enabled | Disabled | Priority-based
+  priority: 1          # 1=highest, 999=lowest
+  healthCheck:
+    enabled: true
+    endpoint: "http://monitoring.example.com/cluster/health"
+    interval: 30s
+  override:
+    reason: "Manual failover for maintenance"
+    expiresAt: "2025-10-02T10:00:00Z"
+status:
+  effectiveState: Enabled
+  lastTransition: "2025-10-02T05:43:00Z"
+  activeLeader: "cardano-bp-0"
+  reason: "Highest priority cluster"
+  conditions:
+  - type: ForgeEnabled
+    status: "True"
+    reason: HighestPriority
+  - type: HealthCheckPassing
+    status: "True"
+    lastProbeTime: "2025-10-02T05:42:30Z"
+```
 
 ---
 
@@ -273,10 +383,14 @@ stateDiagram-v2
 - Metrics:
   - `cardano_forging_enabled{pod="..."}` (1 or 0).  
   - `cardano_leader_status{pod="..."}` (1 if leader).  
-  - `cardano_leadership_changes_total`.  
+  - `cardano_leadership_changes_total`.
+  - `cardano_cluster_forge_enabled{cluster="...", region="..."}` (1 or 0) - *Extension for FR9*.
+  - `cardano_cluster_forge_priority{cluster="..."}` (priority number) - *Extension for FR9*.
 - Alerts:
   - `sum(cardano_forging_enabled) > 1` → Critical.  
-  - `sum(cardano_forging_enabled) == 0 for 60s` → Warning.  
+  - `sum(cardano_forging_enabled) == 0 for 60s` → Warning.
+  - `sum(cardano_cluster_forge_enabled) > 1` → Critical (multi-cluster split-brain) - *Extension for FR9*.
+  - `sum(cardano_cluster_forge_enabled) == 0 for 60s` → Warning (no cluster forging) - *Extension for FR9*.
 - Logs:
   - Sidecar must log every leadership transition, SIGHUP sent, and credential state change.
 - Leader Observation:
@@ -372,6 +486,18 @@ stateDiagram-v2
 - [ ] Credentials removed immediately when leadership lost
 - [ ] RBAC limited to minimal required permissions
 
+**FR9 - Cluster-Wide Forge Management (Extension)**
+- [ ] CardanoForgeCluster CRD manages forge state at cluster level
+- [ ] Supports forgeState values: Enabled, Disabled, Priority-based
+- [ ] Contains cluster identification, priority, and region labels
+- [ ] Local CardanoLeader behavior respects cluster-wide settings
+- [ ] Priority system prevents multiple clusters from forging simultaneously
+- [ ] Manual failover supported via priority updates
+- [ ] Health check integration influences effective priority
+- [ ] Cluster-wide disable immediately stops all local forging
+- [ ] Gradual transition support for maintenance scenarios
+- [ ] CRD status reflects effective state and transition reasons
+
 ### Edge Cases Acceptance Criteria
 
 **EC1 - Premature SIGHUP Prevention**
@@ -442,6 +568,36 @@ stateDiagram-v2
 - [ ] Handles ApiException during CRD status checks gracefully
 - [ ] Immediate leadership forfeiture when node socket disappears
 
+**EC12 - Cross-Cluster Communication Failure (Extension)**
+- [ ] Clusters make independent decisions based on local CRD state
+- [ ] Temporary split-brain detection via metrics monitoring
+- [ ] Network partition recovery works correctly
+- [ ] Default behavior during communication failure is safe (no dual forging)
+
+**EC13 - CRD Synchronization Lag (Extension)**
+- [ ] CRD watch implemented with backoff retry mechanism
+- [ ] 30 second grace period for CRD propagation
+- [ ] Defaults to disabled state when CRD cannot be read
+- [ ] Logs synchronization delays appropriately
+
+**EC14 - Priority Conflict Resolution (Extension)**
+- [ ] Cluster creation timestamp used as tiebreaker for equal priorities
+- [ ] Priority conflicts logged at startup
+- [ ] Manual priority override works correctly
+- [ ] Automatic conflict resolution is deterministic
+
+**EC15 - Cluster Health vs Priority Mismatch (Extension)**
+- [ ] Health checks influence effective priority calculation
+- [ ] Manual override bypasses health-based priority changes
+- [ ] Automated failover respects configurable health thresholds
+- [ ] Health check failures logged with appropriate severity
+
+**EC16 - Global Disable Race Conditions (Extension)**
+- [ ] Immediate forging disable upon receiving global disable command
+- [ ] Prefers temporary no-forging over dual-forging during transitions
+- [ ] Re-enable follows priority order with staggered timing
+- [ ] Race conditions during enable/disable transitions handled safely
+
 ### Technical Acceptance Criteria
 
 **Process Management**
@@ -467,6 +623,259 @@ stateDiagram-v2
 - [ ] Metric labels include pod name for identification
 - [ ] Metrics persist across application restarts
 
+**Cluster-Wide Management (Extension)**
+- [ ] CardanoForgeCluster CRD properly defined with OpenAPI schema
+- [ ] CRD includes cluster, region, and priority labels
+- [ ] CRD status subresource tracks effective state and conditions
+- [ ] Forge manager watches CardanoForgeCluster CRD changes in real-time
+- [ ] Hierarchical decision making: cluster state overrides local leader state
+- [ ] Priority-based decision making works across multiple clusters
+- [ ] Health check endpoint integration (optional) influences priorities
+- [ ] Cluster-wide metrics exposed: cardano_cluster_forge_enabled, cardano_cluster_forge_priority
+- [ ] RBAC includes permissions for CardanoForgeCluster CRD access
+- [ ] Configuration supports cluster identification and priority settings
+
+## 5. Multi-Tenant Support: Network and Pool Isolation
+
+### 5.1 Overview
+
+SPOs often run multiple stake pools across different Cardano networks (mainnet, preprod, preview) and potentially different applications within the same Kubernetes cluster. The forge management system must support multi-tenant deployments with proper isolation to prevent cross-contamination between different pools, networks, and applications.
+
+### 5.2 Functional Requirements
+
+#### 5.2.1 Unique Identification System
+
+**Pool-Based Identification (Primary)**
+- Each deployment MUST be uniquely identified by its pool ID (hex format)
+- Pool ID serves as the most granular and unique identifier
+- Format: `pool1abcd...xyz` (Bech32) or equivalent hex representation
+- Pool ID MUST be immutable for a given deployment
+
+**Network-Based Classification**
+- Each deployment MUST specify its target Cardano network
+- Supported networks: `mainnet`, `preprod`, `preview`, `custom`
+- Custom networks support arbitrary network magic numbers
+- Network isolation prevents cross-network leader election conflicts
+
+**Application-Based Grouping (Optional)**
+- Support for different application types within the same network
+- Examples: `block-producer`, `relay-only`, `monitoring`
+- Application type affects resource allocation and monitoring but not leadership
+
+#### 5.2.2 Isolation Requirements
+
+**Leadership Isolation**
+- Leadership election MUST be scoped to: `network + pool`
+- Pools on different networks MUST NOT interfere with each other
+- Pools within the same network MUST be completely isolated
+- Cross-pool leader election MUST be impossible
+
+**CRD Namespacing**
+- CardanoForgeCluster CRDs MUST include network and pool identifiers
+- CRD names MUST follow pattern: `{network}-{pool-id-short}-{region}`
+- Example: `mainnet-pool1abcd-us-east-1`
+- CRD labels MUST include network, pool, and application metadata
+
+**Configuration Isolation**
+- Each pool deployment MUST have independent configuration
+- Secrets (KES, VRF, OpCert) MUST be scoped per pool
+- Health check endpoints MUST be pool-specific
+- Metrics MUST include network and pool labels
+
+#### 5.2.3 Multi-Tenant Deployment Patterns
+
+**Pattern 1: Multi-Network Single Pool**
+```
+Namespace: spo-operations
+├── mainnet-pool1abcd-deployment (StatefulSet)
+├── preprod-pool1abcd-deployment (StatefulSet)
+└── preview-pool1abcd-deployment (StatefulSet)
+```
+
+**Pattern 2: Multi-Pool Single Network**
+```
+Namespace: spo-operations
+├── mainnet-pool1abcd-deployment (StatefulSet)
+├── mainnet-pool1efgh-deployment (StatefulSet)
+└── mainnet-pool1ijkl-deployment (StatefulSet)
+```
+
+**Pattern 3: Mixed Multi-Tenant**
+```
+Namespace: spo-operations
+├── mainnet-pool1abcd-deployment (Primary pool, mainnet)
+├── mainnet-pool1efgh-deployment (Secondary pool, mainnet)
+├── preprod-pool1abcd-deployment (Testing, preprod)
+└── preview-pool1abcd-deployment (Development, preview)
+```
+
+### 5.3 Technical Requirements
+
+#### 5.3.1 Environment Variables
+
+**Required Variables (Pool-Specific)**
+- `CARDANO_NETWORK`: Target network (`mainnet`, `preprod`, `preview`, `custom`)
+- `POOL_ID`: Unique pool identifier (bech32 or hex format)
+- `POOL_ID_HEX`: Pool ID in hex format (for internal processing)
+- `NETWORK_MAGIC`: Network magic number (for custom networks)
+
+**Optional Variables (Application-Specific)**
+- `APPLICATION_TYPE`: Application classification (`block-producer`, `relay-only`)
+- `POOL_NAME`: Human-readable pool name (for monitoring/labeling)
+- `POOL_TICKER`: Pool ticker symbol (if applicable)
+
+#### 5.3.2 CRD Schema Extensions
+
+**Metadata Enhancements**
+```yaml
+metadata:
+  name: mainnet-pool1abcd-us-east-1
+  labels:
+    cardano.io/network: mainnet
+    cardano.io/pool-id: pool1abcd...xyz
+    cardano.io/pool-id-hex: abcd...xyz
+    cardano.io/application: block-producer
+    cardano.io/region: us-east-1
+spec:
+  network:
+    name: mainnet
+    magic: 764824073
+  pool:
+    id: pool1abcd...xyz
+    idHex: abcd...xyz
+    name: "My Stake Pool"
+    ticker: "MYPOOL"
+  application:
+    type: block-producer
+```
+
+**Status Isolation**
+```yaml
+status:
+  networkStatus:
+    network: mainnet
+    syncStatus: synced
+    tipSlot: 12345678
+  poolStatus:
+    poolId: pool1abcd...xyz
+    activeStake: "1000000000000"
+    delegatorCount: 150
+    lastBlockProduced: "2024-10-02T08:00:00Z"
+```
+
+#### 5.3.3 Metrics Enhancements
+
+**Multi-Dimensional Labels**
+```prometheus
+# Existing metrics with additional labels
+cardano_forging_enabled{pod="cardano-bp-0", network="mainnet", pool_id="pool1abcd", application="block-producer"} 1
+cardano_cluster_forge_enabled{cluster="us-east-1", network="mainnet", pool_id="pool1abcd"} 1
+
+# New multi-tenant specific metrics
+cardano_network_pool_count{network="mainnet"} 3
+cardano_application_pool_count{application="block-producer", network="mainnet"} 2
+cardano_pool_leadership_changes_total{network="mainnet", pool_id="pool1abcd"} 15
+```
+
+### 5.4 Edge Cases and Constraints
+
+#### 5.4.1 Pool ID Validation
+- Pool IDs MUST be validated against Cardano bech32 format
+- Hex conversion MUST be consistent and reversible
+- Invalid pool IDs MUST cause deployment failure with clear error messages
+- Pool ID uniqueness MUST be enforced within the same network
+
+#### 5.4.2 Network Magic Validation
+- Network magic MUST match the specified network type
+- Custom networks MUST provide valid magic numbers
+- Magic number conflicts MUST be detected and prevented
+- Network type changes MUST trigger deployment recreation
+
+#### 5.4.3 Cross-Tenant Isolation
+- Leadership decisions MUST NOT be influenced by other pools/networks
+- Health checks MUST be scoped to specific pool deployments
+- CRD watchers MUST filter events by network and pool
+- Metrics MUST be properly labeled to prevent aggregation errors
+
+#### 5.4.4 Resource Conflicts
+- Multiple pools in the same cluster MUST use different ports
+- Secret names MUST include pool identifier to prevent conflicts
+- ConfigMaps MUST be pool-specific
+- Service names MUST be unique per pool
+
+### 5.5 Operational Scenarios
+
+#### 5.5.1 Multi-Pool Mainnet Operation
+```
+SPO runs 3 mainnet pools in us-east-1:
+- pool1abcd (priority 1, primary)
+- pool1efgh (priority 2, secondary)  
+- pool1ijkl (priority 3, tertiary)
+
+Each pool operates independently:
+- Independent leader election
+- Separate health monitoring
+- Isolated credential management
+- Individual failover decisions
+```
+
+#### 5.5.2 Cross-Network Testing
+```
+SPO tests mainnet pool configuration on testnet:
+- mainnet-pool1abcd (production)
+- preprod-pool1abcd (testing)
+- preview-pool1abcd (development)
+
+Each network deployment:
+- Uses same pool credentials (for testing)
+- Independent cluster management
+- Network-specific health endpoints
+- Separate monitoring dashboards
+```
+
+#### 5.5.3 Gradual Migration
+```
+SPO migrates from single-pool to multi-pool:
+1. Deploy second pool: mainnet-pool1efgh
+2. Test cluster coordination
+3. Configure priority ordering
+4. Enable production traffic
+5. Monitor both pools independently
+```
+
+### 5.6 Acceptance Criteria
+
+**Multi-Tenant Isolation**
+- [ ] Pools on the same network operate completely independently
+- [ ] Cross-network deployments do not interfere with each other
+- [ ] Pool ID validation prevents invalid configurations
+- [ ] CRD names include network and pool identifiers
+- [ ] Metrics include network and pool labels
+
+**Configuration Management**
+- [ ] Environment variables support network and pool specification
+- [ ] Secrets are properly scoped per pool
+- [ ] Health check endpoints are pool-specific
+- [ ] Resource conflicts are prevented automatically
+
+**Operational Safety**
+- [ ] Leadership election is scoped to network + pool
+- [ ] Cross-pool leader election is impossible
+- [ ] Network magic validation prevents misconfigurations
+- [ ] Pool ID changes trigger appropriate warnings/errors
+
+**Monitoring and Observability**
+- [ ] Metrics are properly labeled with network and pool information
+- [ ] Dashboards can filter by network and pool
+- [ ] Alerts are scoped to specific pools
+- [ ] Logging includes pool and network context
+
+**Backward Compatibility**
+- [ ] Existing single-pool deployments continue to work
+- [ ] Migration path from single-pool to multi-pool is clear
+- [ ] Default values maintain current behavior
+- [ ] Breaking changes are clearly documented
+
 ---
 
 ## Next Steps
@@ -481,3 +890,11 @@ stateDiagram-v2
    - Crash recovery.  
    - Split-brain prevention.  
    - Double forging alerts.
+5. **Cluster-Wide Forge Management (Extension)**:
+   - Define CardanoForgeCluster CRD with OpenAPI schema.
+   - Implement cluster state watching and hierarchical decision making.
+   - Add cluster-wide metrics: `cardano_cluster_forge_enabled`, `cardano_cluster_forge_priority`.
+   - Create example multi-region deployment configurations.
+   - Implement health check integration for automated failover.
+   - Test cross-cluster priority resolution and race condition handling.
+   - Document SPO operational procedures for manual failover scenarios.

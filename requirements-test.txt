@@ -1,0 +1,5 @@
+unittest-xml-reporting>=3.2.0
+coverage>=7.0.0
+pytest>=7.0.0
+pytest-kubernetes>=0.6.0
+pytest-timeout>=2.1.0

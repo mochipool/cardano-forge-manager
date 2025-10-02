@@ -12,7 +12,7 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/forgemanager.py ./
+COPY src/*.py ./
 
 # 12-factor environment variables
 ENV PYTHONUNBUFFERED=1 \

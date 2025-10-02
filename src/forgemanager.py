@@ -7,22 +7,23 @@ This sidecar manages leader election, credential distribution, and process signa
 for Cardano block producer nodes running in Kubernetes.
 """
 
-import os
-import time
 import logging
+import os
 import shutil
-import stat
 import signal
-import threading
-from pathlib import Path
-from typing import Optional, List
-from datetime import datetime, timezone, timedelta
+import stat
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 # Third-party imports
 import psutil
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from prometheus_client import start_http_server, Gauge, Counter, Info
+from prometheus_client import Counter, Gauge, Info, start_http_server
+
+# Cluster management (extension)
+import cluster_manager
 
 # -----------------------------
 # Environment variables
@@ -62,6 +63,15 @@ TARGET_OP_CERT = os.environ.get("TARGET_OP_CERT", "/opt/cardano/secrets/node.cer
 # Process discovery
 CARDANO_NODE_PROCESS_NAME = os.environ.get("CARDANO_NODE_PROCESS_NAME", "cardano-node")
 
+# Multi-tenant configuration (for cluster manager integration)
+CARDANO_NETWORK = os.environ.get("CARDANO_NETWORK", "mainnet")
+POOL_ID = os.environ.get("POOL_ID", "")
+POOL_ID_HEX = os.environ.get("POOL_ID_HEX", "")
+POOL_NAME = os.environ.get("POOL_NAME", "")
+POOL_TICKER = os.environ.get("POOL_TICKER", "")
+NETWORK_MAGIC = int(os.environ.get("NETWORK_MAGIC", "764824073"))  # Default to mainnet
+APPLICATION_TYPE = os.environ.get("APPLICATION_TYPE", "block-producer")
+
 # -----------------------------
 # Logging Setup
 # -----------------------------
@@ -75,10 +85,14 @@ logger = logging.getLogger("cardano-forge-manager")
 # Prometheus Metrics
 # -----------------------------
 forging_enabled = Gauge(
-    "cardano_forging_enabled", "Whether this pod is actively forging blocks", ["pod"]
+    "cardano_forging_enabled",
+    "Whether this pod is actively forging blocks",
+    ["pod", "network", "pool_id", "application"],
 )
 leader_status = Gauge(
-    "cardano_leader_status", "Whether this pod is the elected leader", ["pod"]
+    "cardano_leader_status",
+    "Whether this pod is the elected leader",
+    ["pod", "network", "pool_id", "application"],
 )
 leadership_changes_total = Counter(
     "cardano_leadership_changes_total", "Total number of leadership transitions"
@@ -97,8 +111,30 @@ info_metric = Info(
     "cardano_forge_manager_info", "Information about the forge manager instance"
 )
 
-# Initialize info metric
-info_metric.info({"pod_name": POD_NAME, "namespace": NAMESPACE, "version": "1.0.0"})
+# Cluster-wide metrics (extension) - updated for multi-tenant support
+cluster_forge_enabled = Gauge(
+    "cardano_cluster_forge_enabled",
+    "Whether this cluster is enabled for forging",
+    ["cluster", "region", "network", "pool_id"],
+)
+cluster_forge_priority = Gauge(
+    "cardano_cluster_forge_priority",
+    "Effective priority of this cluster for forging",
+    ["cluster", "region", "network", "pool_id"],
+)
+
+# Initialize info metric with multi-tenant information
+info_metric.info(
+    {
+        "pod_name": POD_NAME,
+        "namespace": NAMESPACE,
+        "version": "2.0.0",
+        "network": CARDANO_NETWORK,
+        "pool_id": POOL_ID or "unknown",
+        "pool_ticker": POOL_TICKER or "unknown",
+        "application_type": APPLICATION_TYPE,
+    }
+)
 
 # -----------------------------
 # Kubernetes Client Setup
@@ -112,6 +148,9 @@ except Exception:
 
 custom_objects = client.CustomObjectsApi()
 coord_api = client.CoordinationV1Api()
+
+# Initialize cluster management
+cluster_manager.initialize_cluster_manager(custom_objects, POD_NAME)
 
 # -----------------------------
 # Global State
@@ -297,19 +336,19 @@ def provision_startup_credentials() -> bool:
 def forfeit_leadership():
     """Forfeit current leadership due to node restart/failure."""
     global current_leadership_state
-    
+
     if not current_leadership_state:
         return  # Nothing to forfeit
-    
+
     logger.warning("Forfeiting leadership due to cardano-node restart")
-    
+
     # Clear leadership state immediately
     current_leadership_state = False
     leadership_changes_total.inc()
-    
+
     # Clean up credentials immediately
     ensure_secrets(is_leader=False, send_sighup=False)
-    
+
     # Check current CRD status before clearing to avoid race condition
     # Only clear if we're still shown as the leader in the CRD
     try:
@@ -320,10 +359,10 @@ def forfeit_leadership():
             plural=CRD_PLURAL,
             name=CRD_NAME,
         )
-        
+
         # Check if we're still the recorded leader
         current_leader = current_crd.get("status", {}).get("leaderPod", "")
-        
+
         if current_leader != POD_NAME:
             logger.info(
                 f"Not clearing CRD status - another pod ({current_leader or 'none'}) is now leader"
@@ -331,10 +370,12 @@ def forfeit_leadership():
             # Update local metrics but don't touch CRD
             update_metrics(is_leader=False)
             return
-        
+
         # We're still the recorded leader, safe to clear the status
-        logger.info(f"Clearing CRD status - we ({POD_NAME}) are still the recorded leader")
-        
+        logger.info(
+            f"Clearing CRD status - we ({POD_NAME}) are still the recorded leader"
+        )
+
     except ApiException as e:
         if e.status == 404:
             logger.info("CRD not found during leadership forfeiture - nothing to clear")
@@ -343,7 +384,7 @@ def forfeit_leadership():
         else:
             logger.warning(f"Could not check CRD status during forfeiture: {e}")
             logger.info("Proceeding with caution to clear status anyway")
-    
+
     # Update CRD to clear leadership status
     status_body = {
         "status": {
@@ -364,7 +405,7 @@ def forfeit_leadership():
         logger.info("Leadership forfeited - CRD status cleared")
     except ApiException as e:
         logger.error(f"Failed to clear CRD status during leadership forfeiture: {e}")
-    
+
     # Update local metrics
     update_metrics(is_leader=False)
 
@@ -394,14 +435,53 @@ def update_leader_status(is_leader: bool):
         logger.info(
             f"CRD status updated: leader={POD_NAME if is_leader else 'none'}, forgingEnabled={is_leader}"
         )
+
+        # Also update cluster CRD if cluster management is enabled
+        cluster_manager.update_cluster_leader_status(
+            POD_NAME if is_leader else None, is_leader
+        )
+
     except ApiException as e:
         logger.error(f"Failed to update CRD status: {e}")
 
 
 def update_metrics(is_leader: bool):
     """Update Prometheus metrics with current state."""
-    leader_status.labels(pod=POD_NAME).set(1 if is_leader else 0)
-    forging_enabled.labels(pod=POD_NAME).set(1 if is_leader else 0)
+    # Use multi-tenant labels
+    pool_id_short = POOL_ID[:10] if POOL_ID else "unknown"
+    labels = {
+        "pod": POD_NAME,
+        "network": CARDANO_NETWORK,
+        "pool_id": pool_id_short,
+        "application": APPLICATION_TYPE,
+    }
+
+    leader_status.labels(**labels).set(1 if is_leader else 0)
+    forging_enabled.labels(**labels).set(1 if is_leader else 0)
+
+    # Update cluster-wide metrics if available
+    cluster_metrics = cluster_manager.get_cluster_metrics()
+    if cluster_metrics.get("enabled", False):
+        cluster_id = cluster_metrics.get("cluster_id", "unknown")
+        region = cluster_metrics.get("region", "unknown")
+        network = cluster_metrics.get("network", "unknown")
+        pool_id = cluster_metrics.get("pool_id", "unknown")
+        pool_id_short = pool_id[:10] if pool_id and pool_id != "unknown" else "unknown"
+
+        cluster_labels = {
+            "cluster": cluster_id,
+            "region": region,
+            "network": network,
+            "pool_id": pool_id_short,
+        }
+
+        cluster_forge_enabled.labels(**cluster_labels).set(
+            1 if cluster_metrics.get("forge_enabled", False) else 0
+        )
+        cluster_forge_priority.labels(**cluster_labels).set(
+            cluster_metrics.get("effective_priority", 999)
+        )
+
     logger.debug(f"Metrics updated: leader={is_leader}, forging={is_leader}")
 
 
@@ -445,7 +525,7 @@ def remove_file(path: str, file_type: str) -> bool:
         return True
 
 
-def wait_for_socket(timeout: int = None) -> bool:
+def wait_for_socket(timeout: int = 0) -> bool:
     """Wait for cardano-node socket to exist before proceeding."""
     if DISABLE_SOCKET_CHECK:
         logger.info("Socket check disabled via DISABLE_SOCKET_CHECK")
@@ -603,7 +683,7 @@ def get_lease():
 
 def create_lease():
     """Create new lease object."""
-    from kubernetes.client import V1Lease, V1ObjectMeta, V1LeaseSpec
+    from kubernetes.client import V1Lease, V1LeaseSpec, V1ObjectMeta
 
     now = datetime.now(timezone.utc).isoformat()
     lease = V1Lease(
@@ -638,8 +718,19 @@ def patch_lease(lease):
 
 
 def try_acquire_leader() -> bool:
-    """Attempt to acquire leadership via lease mechanism."""
+    """Attempt to acquire leadership via lease mechanism with cluster-wide checks."""
     global current_leadership_state
+
+    # Check cluster-wide forge management first (extension)
+    allowed, reason = cluster_manager.should_allow_local_leadership()
+    if not allowed:
+        logger.info(f"Local leadership blocked by cluster management: {reason}")
+        # Ensure we're not leader if cluster blocks us
+        if current_leadership_state:
+            current_leadership_state = False
+            ensure_secrets(is_leader=False)
+            update_metrics(is_leader=False)
+        return False
 
     try:
         lease = get_lease()
@@ -668,7 +759,6 @@ def try_acquire_leader() -> bool:
 
             try:
                 patch_lease(lease)
-                new_leader = True
 
                 # Log leadership transition
                 if old_holder != POD_NAME:
@@ -684,13 +774,10 @@ def try_acquire_leader() -> bool:
 
             except ApiException as e:
                 if e.status == 409:  # Conflict - someone else got it
-                    logger.debug(f"Failed to acquire lease due to conflict (409)")
-                    new_leader = False
+                    logger.debug("Failed to acquire lease due to conflict (409)")
                 else:
                     logger.error(f"Unexpected error acquiring lease: {e}")
                     raise
-        else:
-            new_leader = False
 
         # Check if we lost leadership
         if current_leadership_state and holder != POD_NAME:
@@ -825,6 +912,12 @@ def main():
         if current_leadership_state:
             logger.info("Cleaning up credentials before shutdown")
             ensure_secrets(is_leader=False)
+
+        # Stop cluster management
+        cluster_mgr = cluster_manager.get_cluster_manager()
+        if cluster_mgr:
+            cluster_mgr.stop()
+
         logger.info("Cardano Forge Manager shutdown complete")
 
 

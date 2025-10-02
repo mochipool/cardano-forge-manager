@@ -1,0 +1,113 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cardano-node-preprod-pool1
+  namespace: cardano
+  labels:
+    app: cardano-node
+    component: block-producer
+    cardano.io/network: preprod
+    cardano.io/pool-id: POOL1
+    cardano.io/application: block-producer
+spec:
+  serviceName: cardano-node-preprod-pool1
+  replicas: 2  # Smaller deployment for testnet
+  selector:
+    matchLabels:
+      app: cardano-node
+      cardano.io/network: preprod
+      cardano.io/pool-id: POOL1
+  template:
+    metadata:
+      labels:
+        app: cardano-node
+        component: block-producer
+        cardano.io/network: preprod
+        cardano.io/pool-id: POOL1
+        cardano.io/application: block-producer
+    spec:
+      containers:
+      - name: cardano-node
+        image: inputoutput/cardano-node:latest
+        ports:
+        - containerPort: 3001
+          name: node-port
+        - containerPort: 12798
+          name: metrics
+        env:
+        - name: CARDANO_NETWORK
+          value: "preprod"
+        - name: CARDANO_NODE_SOCKET_PATH
+          value: "/opt/cardano/db/node.socket"
+        volumeMounts:
+        - name: db
+          mountPath: /opt/cardano/db
+        - name: config
+          mountPath: /opt/cardano/config
+        resources:
+          requests:
+            memory: "2Gi"   # Smaller for testnet
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "1000m"
+        
+      - name: forge-manager
+        image: cardano-forge-manager:latest
+        env:
+        # Multi-tenant configuration
+        - name: ENABLE_CLUSTER_MANAGEMENT
+          value: "true"
+        - name: POOL_ID
+          value: "POOL1"
+        - name: CARDANO_NETWORK
+          value: "preprod"
+        - name: NETWORK_MAGIC
+          value: "1"
+        - name: POOL_TICKER
+          value: "POOL1"
+        - name: POOL_NAME
+          value: "My Preprod Test Pool"
+        - name: APPLICATION_TYPE
+          value: "block-producer"
+        # Regional configuration
+        - name: CLUSTER_REGION
+          value: "us-east-1"
+        - name: CLUSTER_ENVIRONMENT
+          value: "testing"
+        - name: CLUSTER_PRIORITY
+          value: "50"  # Lower priority for testnet
+        # Health check configuration
+        - name: HEALTH_CHECK_ENDPOINT
+          value: "http://localhost:12798/health"
+        - name: HEALTH_CHECK_INTERVAL
+          value: "60"  # Less frequent checks for testnet
+        # Logging
+        - name: LOG_LEVEL
+          value: "DEBUG"  # More verbose for testing
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "100m"
+            
+      volumes:
+      - name: config
+        configMap:
+          name: cardano-node-preprod-config
+          
+  volumeClaimTemplates:
+  - metadata:
+      name: db
+      labels:
+        cardano.io/network: preprod
+        cardano.io/pool-id: POOL1
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard  # Cheaper storage for testnet
+      resources:
+        requests:
+          storage: 20Gi  # Smaller for testnet

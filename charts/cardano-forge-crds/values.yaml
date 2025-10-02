@@ -1,0 +1,103 @@
+# Default values for cardano-forge-crds
+# This file contains default configuration values for the Cardano Forge Manager CRDs
+
+# Global configuration
+global:
+  # Labels to add to all resources
+  commonLabels: {}
+  # Annotations to add to all resources  
+  commonAnnotations: {}
+
+# CRD configuration
+crds:
+  # Whether to install CRDs
+  create: true
+  
+  # CRD API configuration
+  group: cardano.io
+  version: v1
+  
+  # CardanoForgeCluster CRD configuration
+  cardanoForgeCluster:
+    # Whether to create the CardanoForgeCluster CRD
+    enabled: true
+    
+    # Additional labels for the CRD
+    labels:
+      app.kubernetes.io/name: cardano-forge-manager
+      app.kubernetes.io/component: cluster-management
+      app.kubernetes.io/version: "2.0.0"
+    
+    # Additional annotations for the CRD  
+    annotations:
+      controller-gen.kubebuilder.io/version: v0.13.0
+      
+    # Whether to keep the CRD when the chart is uninstalled
+    # Setting to true prevents accidental data loss
+    keepOnDelete: true
+
+  # CardanoLeader CRD configuration
+  cardanoLeader:
+    enabled: true
+    labels: {}
+    annotations: {}
+    keepOnDelete: true
+
+# RBAC configuration
+rbac:
+  # Whether to create RBAC resources
+  create: true
+  
+  # ServiceAccount configuration
+  serviceAccount:
+    # Whether to create a service account
+    create: true
+    # Name of the service account (auto-generated if not specified)
+    name: ""
+    # Additional annotations for the service account
+    annotations: {}
+    # Additional labels for the service account
+    labels: {}
+  
+  # ClusterRole configuration
+  clusterRole:
+    # Whether to create a cluster role for CRD management
+    create: true
+    # Name of the cluster role (auto-generated if not specified) 
+    name: ""
+    # Additional annotations for the cluster role
+    annotations: {}
+    # Additional labels for the cluster role
+    labels: {}
+  
+  # ClusterRoleBinding configuration
+  clusterRoleBinding:
+    # Whether to create a cluster role binding
+    create: true
+    # Name of the cluster role binding (auto-generated if not specified)
+    name: ""
+    # Additional annotations for the cluster role binding
+    annotations: {}
+    # Additional labels for the cluster role binding
+    labels: {}
+
+# Example CardanoForgeCluster instances to create (for testing/demo)
+examples:
+  # Whether to create example instances
+  create: false
+  
+  # List of example cluster configurations
+  clusters: []
+  #  - name: preview-pool-example-us-east-1
+  #    network:
+  #      name: preview
+  #      magic: 2
+  #    pool:
+  #      id: pool1example1234567890example1234567890example1234567890
+  #      idHex: "example123456789012345678901234567890123456789012345678901234"
+  #      name: "Example Pool"
+  #      ticker: "EXMPL"
+  #    forgeState: Priority-based
+  #    priority: 100
+  #    region: us-east-1
+  #    environment: development
