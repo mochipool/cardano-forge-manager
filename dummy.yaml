@@ -125,7 +125,7 @@ spec:
               mountPath: /ipc
       containers:
         - name: forge-manager
-          image:  ttl.sh/7ded1b80-34ff-42a1-8148-69e7832af254:1h
+          image:  ghcr.io/mochipool/cardano-forge-manager:REPLACETHISTAG
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
