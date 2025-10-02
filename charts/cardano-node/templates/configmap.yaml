@@ -1,0 +1,150 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cardano-node.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {
+      "AlonzoGenesisFile": "{{ .Values.cardanoNode.config.alonzoGenesisFile }}",
+      "ByronGenesisFile": "{{ .Values.cardanoNode.config.byronGenesisFile }}",
+      "ConsensusMode": "{{ .Values.cardanoNode.config.consensusMode }}",
+      "ConwayGenesisFile": "{{ .Values.cardanoNode.config.conwayGenesisFile }}",
+      "EnableP2P": {{ .Values.cardanoNode.config.enableP2P }},
+      "LastKnownBlockVersion-Alt": {{ .Values.cardanoNode.config.lastKnownBlockVersionAlt }},
+      "LastKnownBlockVersion-Major": {{ .Values.cardanoNode.config.lastKnownBlockVersionMajor }},
+      "LastKnownBlockVersion-Minor": {{ .Values.cardanoNode.config.lastKnownBlockVersionMinor }},
+      "LedgerDB": {
+        "Backend": "{{ .Values.cardanoNode.config.ledgerDB.backend }}",
+        "NumOfDiskSnapshots": {{ .Values.cardanoNode.config.ledgerDB.numOfDiskSnapshots }},
+        "QueryBatchSize": {{ .Values.cardanoNode.config.ledgerDB.queryBatchSize }},
+        "SnapshotInterval": {{ .Values.cardanoNode.config.ledgerDB.snapshotInterval }}
+      },
+      "MaxKnownMajorProtocolVersion": {{ .Values.cardanoNode.config.maxKnownMajorProtocolVersion }},
+      "MempoolCapacityBytesOverride": {{ .Values.cardanoNode.config.mempoolCapacityBytesOverride }},
+      "MinBigLedgerPeersForTrustedState": {{ .Values.cardanoNode.config.minBigLedgerPeersForTrustedState }},
+      "PeerSharing": {{ .Values.cardanoNode.config.peerSharing }},
+      "Protocol": "{{ .Values.cardanoNode.config.protocol }}",
+      "RequiresNetworkMagic": "{{ .Values.cardanoNode.config.requiresNetworkMagic }}",
+      "ShelleyGenesisFile": "{{ .Values.cardanoNode.config.shelleyGenesisFile }}",
+      "SyncTargetNumberOfActiveBigLedgerPeers": {{ .Values.cardanoNode.config.syncTargetNumberOfActiveBigLedgerPeers }},
+      "SyncTargetNumberOfActivePeers": {{ .Values.cardanoNode.config.syncTargetNumberOfActivePeers }},
+      "SyncTargetNumberOfEstablishedBigLedgerPeers": {{ .Values.cardanoNode.config.syncTargetNumberOfEstablishedBigLedgerPeers }},
+      "SyncTargetNumberOfKnownBigLedgerPeers": {{ .Values.cardanoNode.config.syncTargetNumberOfKnownBigLedgerPeers }},
+      "TargetNumberOfActivePeers": {{ .Values.cardanoNode.config.targetNumberOfActivePeers }},
+      "TargetNumberOfEstablishedPeers": {{ .Values.cardanoNode.config.targetNumberOfEstablishedPeers }},
+      "TargetNumberOfKnownPeers": {{ .Values.cardanoNode.config.targetNumberOfKnownPeers }},
+      "TargetNumberOfRootPeers": {{ .Values.cardanoNode.config.targetNumberOfRootPeers }},
+      "TraceOptionMetricsPrefix": "{{ .Values.cardanoNode.config.traceOptionMetricsPrefix }}",
+      "TraceOptionNodeName": "{{ .Values.cardanoNode.config.traceOptionNodeName }}",
+      "TraceOptionPeerFrequency": {{ .Values.cardanoNode.config.traceOptionPeerFrequency }},
+      "TraceOptionResourceFrequency": {{ .Values.cardanoNode.config.traceOptionResourceFrequency }},
+      "TraceOptionForwarder": {
+        "connQueueSize": 64,
+        "disconnQueueSize": 128
+      },
+      "TraceOptions": {
+        "": {
+          "backends": [
+            "{{ .Values.cardanoNode.config.traceOptions.root.backends.stdout }}"
+            {{- if .Values.cardanoNode.prometheus.enabled }},
+            "Prometheus {{ .Values.cardanoNode.prometheus.host }} {{ .Values.cardanoNode.prometheus.port }}"
+            {{- end }}
+          ],
+          "severity": "{{ .Values.cardanoNode.config.traceOptions.root.severity }}"
+        },
+        "BlockFetch.Decision": {
+          "severity": "{{ .Values.cardanoNode.config.traceOptions.blockFetchDecision.severity }}"
+        },
+        "ChainDB": {
+          "severity": "{{ .Values.cardanoNode.config.traceOptions.chainDB.severity }}"
+        },
+        "ChainSync.Client": {
+          "severity": "{{ .Values.cardanoNode.config.traceOptions.chainSyncClient.severity }}"
+        },
+        "Forge.Loop": {
+          "severity": "{{ .Values.cardanoNode.config.traceOptions.forgeLoop.severity }}"
+        },
+        "Forge.StateInfo": {
+          "severity": "{{ .Values.cardanoNode.config.traceOptions.forgeStateInfo.severity }}"
+        },
+        "Mempool": {
+          "severity": "{{ .Values.cardanoNode.config.traceOptions.mempool.severity }}"
+        },
+        "Resources": {
+          "severity": "{{ .Values.cardanoNode.config.traceOptions.resources.severity }}"
+        }
+      },
+      "TurnOnLogMetrics": {{ .Values.cardanoNode.config.turnOnLogMetrics }},
+      "TurnOnLogging": {{ .Values.cardanoNode.config.turnOnLogging }},
+      "UseTraceDispatcher": {{ .Values.cardanoNode.config.useTraceDispatcher }}
+    }
+  
+  topology.json: |
+    {
+      "bootstrapPeers": [
+        {{- range $i, $peer := .Values.cardanoNode.topology.bootstrapPeers }}
+        {{- if $i}},{{ end }}
+        {
+          "address": "{{ $peer.address }}",
+          "port": {{ $peer.port }}
+        }
+        {{- end }}
+      ],
+      "localRoots": [
+        {{- range $i, $root := .Values.cardanoNode.topology.localRoots }}
+        {{- if $i}},{{ end }}
+        {
+          "accessPoints": [
+            {{- range $j, $ap := $root.accessPoints }}
+            {{- if $j}},{{ end }}
+            {
+              "address": "{{ $ap.address }}",
+              "port": {{ $ap.port }}
+              {{- if $ap.pool }},
+              "pool": "{{ $ap.pool }}"
+              {{- end }}
+              {{- if $ap.description }},
+              "description": "{{ $ap.description }}"
+              {{- end }}
+              {{- if $ap.location }},
+              "location": "{{ $ap.location }}"
+              {{- end }}
+            }
+            {{- end }}
+          ],
+          "advertise": {{ $root.advertise | default false }},
+          "trustable": {{ $root.trustable | default false }},
+          "hotValency": {{ $root.hotValency | default 1 }}
+          {{- if $root.warmValency }},
+          "warmValency": {{ $root.warmValency }}
+          {{- end }}
+        }
+        {{- end }}
+      ],
+      "publicRoots": [
+        {{- range $i, $root := .Values.cardanoNode.topology.publicRoots }}
+        {{- if $i}},{{ end }}
+        {
+          "accessPoints": [
+            {{- range $j, $ap := $root.accessPoints }}
+            {{- if $j}},{{ end }}
+            {
+              "address": "{{ $ap.address }}"
+              {{- if $ap.port }},
+              "port": {{ $ap.port }}
+              {{- end }}
+            }
+            {{- end }}
+          ],
+          "advertise": {{ $root.advertise | default false }}
+        }
+        {{- end }}
+      ],
+      "useLedgerAfterSlot": {{ int .Values.cardanoNode.topology.useLedgerAfterSlot }}
+    }
+  
+  genesis/byron-genesis.url: |
+    {{ include "cardano-node.byronGenesisUrl" . }}

@@ -1,0 +1,134 @@
+---
+# Main P2P Service (typically LoadBalancer for external access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cardano-node.fullname" . }}-p2p
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    app.kubernetes.io/component: p2p
+  {{- with .Values.service.p2p.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.p2p.type }}
+  {{- if and (eq .Values.service.p2p.type "LoadBalancer") .Values.service.p2p.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.service.p2p.loadBalancerIP }}
+  {{- end }}
+  ports:
+    - port: {{ .Values.service.p2p.port }}
+      targetPort: {{ .Values.cardanoNode.port }}
+      protocol: TCP
+      name: p2p
+  selector:
+    {{- include "cardano-node.selectorLabels" . | nindent 4 }}
+
+---
+# Metrics Service (ClusterIP for Prometheus scraping)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cardano-node.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+  {{- with .Values.service.metrics.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.metrics.type }}
+  ports:
+    - port: {{ .Values.service.metrics.port }}
+      targetPort: {{ .Values.cardanoNode.prometheus.port }}
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "cardano-node.selectorLabels" . | nindent 4 }}
+
+{{- if eq (include "cardano-node.forgeManagerEnabled" .) "true" }}
+---
+# Forge Manager Metrics Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cardano-node.forgeManagerServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    app.kubernetes.io/component: forge-manager
+  {{- with .Values.forgeManager.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.forgeManager.service.type }}
+  ports:
+    - port: {{ .Values.forgeManager.service.port }}
+      targetPort: {{ .Values.forgeManager.metricsPort }}
+      protocol: TCP
+      name: forge-metrics
+  selector:
+    {{- include "cardano-node.selectorLabels" . | nindent 4 }}
+{{- end }}
+
+{{- if .Values.submitApi.enabled }}
+---
+# Submit API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cardano-node.fullname" . }}-submit-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    app.kubernetes.io/component: submit-api
+  {{- with .Values.service.submitApi.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.submitApi.type }}
+  ports:
+    - port: {{ .Values.service.submitApi.port }}
+      targetPort: {{ .Values.submitApi.port }}
+      protocol: TCP
+      name: submit-api
+    {{- if .Values.submitApi.healthPort }}
+    - port: {{ .Values.submitApi.healthPort }}
+      targetPort: {{ .Values.submitApi.healthPort }}
+      protocol: TCP
+      name: health
+    {{- end }}
+  selector:
+    {{- include "cardano-node.selectorLabels" . | nindent 4 }}
+{{- end }}
+
+{{- if .Values.mithrilSigner.enabled }}
+---
+# Mithril Signer Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cardano-node.fullname" . }}-mithril
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mithril
+  {{- with .Values.service.mithril.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.mithril.type }}
+  ports:
+    - port: {{ .Values.service.mithril.port }}
+      targetPort: {{ .Values.mithrilSigner.port }}
+      protocol: TCP
+      name: mithril
+  selector:
+    {{- include "cardano-node.selectorLabels" . | nindent 4 }}
+{{- end }}

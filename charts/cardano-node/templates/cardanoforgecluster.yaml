@@ -1,0 +1,87 @@
+{{- if eq (include "cardano-node.clusterManagementEnabled" .) "true" -}}
+{{- include "cardano-node.validateClusterManagement" . -}}
+{{- include "cardano-node.validateMultiTenant" . -}}
+---
+apiVersion: cardano.io/v1
+kind: CardanoForgeCluster
+metadata:
+  name: {{ include "cardano-node.cardanoForgeClusterName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cluster-coordination
+    cardano.io/network: {{ .Values.cardanoNode.network | quote }}
+    cardano.io/region: {{ .Values.forgeManager.clusterManagement.region | quote }}
+    {{- if .Values.forgeManager.multiTenant.pool.id }}
+    cardano.io/pool-id: {{ .Values.forgeManager.multiTenant.pool.id | quote }}
+    {{- end }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Network configuration
+  network:
+    name: {{ .Values.cardanoNode.network | quote }}
+    magic: {{ include "cardano-node.networkMagic" . }}
+    {{- if .Values.cardanoNode.config.protocol }}
+    era: {{ .Values.cardanoNode.config.protocol | lower | quote }}
+    {{- end }}
+  
+  # Pool identification (multi-tenant)
+  {{- if eq (include "cardano-node.multiTenantEnabled" .) "true" }}
+  pool:
+    {{ include "cardano-node.poolMetadata" . | nindent 4 }}
+  {{- end }}
+  
+  # Application metadata
+  application:
+    type: {{ .Values.forgeManager.multiTenant.application.type | default "block-producer" | quote }}
+    environment: {{ .Values.forgeManager.multiTenant.application.environment | default "production" | quote }}
+    {{- if .Chart.AppVersion }}
+    version: {{ .Chart.AppVersion | quote }}
+    {{- end }}
+  
+  # Region and priority
+  region: {{ .Values.forgeManager.clusterManagement.region | quote }}
+  priority: {{ .Values.forgeManager.clusterManagement.priority }}
+  forgeState: {{ .Values.forgeManager.clusterManagement.forgeState | quote }}
+  
+  # Health check configuration
+  {{- if .Values.forgeManager.clusterManagement.healthCheck.enabled }}
+  healthCheck:
+    enabled: true
+    endpoint: {{ .Values.forgeManager.clusterManagement.healthCheck.endpoint | quote }}
+    interval: {{ printf "%ds" (int .Values.forgeManager.clusterManagement.healthCheck.interval) }}
+    {{- if .Values.forgeManager.clusterManagement.healthCheck.timeout }}
+    timeout: {{ printf "%ds" (int .Values.forgeManager.clusterManagement.healthCheck.timeout) }}
+    {{- end }}
+    {{- if .Values.forgeManager.clusterManagement.healthCheck.failureThreshold }}
+    failureThreshold: {{ .Values.forgeManager.clusterManagement.healthCheck.failureThreshold }}
+    {{- end }}
+    {{- with .Values.forgeManager.clusterManagement.healthCheck.headers }}
+    headers:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- end }}
+  
+  # Manual override configuration
+  {{- if .Values.forgeManager.clusterManagement.override.enabled }}
+  override:
+    enabled: true
+    {{- if .Values.forgeManager.clusterManagement.override.reason }}
+    reason: {{ .Values.forgeManager.clusterManagement.override.reason | quote }}
+    {{- end }}
+    {{- if .Values.forgeManager.clusterManagement.override.expiresAt }}
+    expiresAt: {{ .Values.forgeManager.clusterManagement.override.expiresAt | quote }}
+    {{- end }}
+    {{- if .Values.forgeManager.clusterManagement.override.forcePriority }}
+    forcePriority: {{ .Values.forgeManager.clusterManagement.override.forcePriority }}
+    {{- end }}
+    {{- if .Values.forgeManager.clusterManagement.override.forceState }}
+    forceState: {{ .Values.forgeManager.clusterManagement.override.forceState | quote }}
+    {{- end }}
+  {{- end }}
+
+status: {}
+{{- end }}

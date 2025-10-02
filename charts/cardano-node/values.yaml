@@ -1,0 +1,599 @@
+# Default values for cardano-node with Forge Manager v2.0
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# ===========================================
+# GLOBAL CONFIGURATION
+# ===========================================
+global:
+  # Common labels to add to all resources
+  commonLabels: {}
+  
+  # Common annotations to add to all resources
+  commonAnnotations: {}
+
+# ===========================================
+# REPLICA CONFIGURATION
+# ===========================================
+replicaCount: 1  # For relay nodes or single-cluster block producers
+# For HA block producers, use 3+ replicas with forgeManager.enabled: true
+
+# ===========================================
+# IMAGE CONFIGURATION
+# ===========================================
+image:
+  cardanoNode:
+    repository: ghcr.io/blinklabs-io/cardano-node
+    pullPolicy: IfNotPresent
+    tag: "8.9.0"
+  
+  forgeManager:
+    repository: ghcr.io/mochipool/cardano-forge-manager
+    pullPolicy: IfNotPresent
+    tag: "2.0.0"
+  
+  mithrilSigner:
+    repository: ghcr.io/input-output-hk/mithril-signer
+    pullPolicy: IfNotPresent
+    tag: "latest"
+    enabled: false  # Enable for block producers
+  
+  submitApi:
+    repository: ghcr.io/blinklabs-io/tx-submit-api
+    pullPolicy: IfNotPresent
+    tag: "latest"
+    enabled: false  # Enable if you want transaction submission
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ===========================================
+# CARDANO NODE CONFIGURATION
+# ===========================================
+cardanoNode:
+  # Network configuration
+  network: "mainnet"  # mainnet, preprod, preview, or custom
+  magic: "764824073"  # Network magic (must be string)
+  
+  # Paths
+  socketPath: "/ipc/node.socket"
+  configDir: "/opt/cardano/config"
+  dataDir: "/data"
+  
+  # Block producer mode
+  blockProducer: false  # Set to true for block producer nodes
+  startAsNonProducing: false  # Start as non-producing, forge manager will enable forging
+  
+  # Mithril snapshot (for fast bootstrap)
+  mithril:
+    enabled: true
+    restoreSnapshot: true
+    aggregatorEndpoint: "https://aggregator.release-mainnet.api.mithril.network/aggregator"
+    genesisVerificationKey: "5b3139312c36362c3134302c3138352c3133382c31312c3233372c3230372c3235302c3134342c32372c322c3138382c33302c31322c38312c3135352c3230342c31302c3137392c37352c32332c3133382c3139362c3231372c352c31342c32302c35372c37392c33392c3137365d"
+  
+  # Network ports
+  port: 3001
+  ekgPort: 12788
+  
+  # Prometheus metrics
+  prometheus:
+    enabled: true
+    host: "0.0.0.0"
+    port: 12798
+  
+  # Cardano node configuration (injected into config.json)
+  config:
+    # Genesis file paths
+    byronGenesisFile: "/opt/cardano/config/genesis/byron-genesis.json"
+    shelleyGenesisFile: "/opt/cardano/config/genesis/shelley-genesis.json"
+    alonzoGenesisFile: "/opt/cardano/config/genesis/alonzo-genesis.json"
+    conwayGenesisFile: "/opt/cardano/config/genesis/conway-genesis.json"
+    
+    # Protocol and consensus
+    protocol: "Cardano"
+    consensusMode: "PraosMode"
+    requiresNetworkMagic: "RequiresNoMagic"  # "RequiresMagic" for testnets
+    
+    # P2P configuration
+    enableP2P: true
+    peerSharing: false
+    
+    # Block version settings
+    lastKnownBlockVersionMajor: 3
+    lastKnownBlockVersionMinor: 0
+    lastKnownBlockVersionAlt: 0
+    maxKnownMajorProtocolVersion: 2
+    
+    # LedgerDB configuration
+    ledgerDB:
+      backend: "V2InMemory"
+      snapshotInterval: 43200
+      numOfDiskSnapshots: 2
+      queryBatchSize: 100000
+    
+    # Memory and performance
+    mempoolCapacityBytesOverride: 67108864
+    minBigLedgerPeersForTrustedState: 5
+    
+    # Peer targeting
+    targetNumberOfActivePeers: 20
+    targetNumberOfEstablishedPeers: 40
+    targetNumberOfKnownPeers: 100
+    targetNumberOfRootPeers: 60
+    
+    # Sync targets
+    syncTargetNumberOfActivePeers: 0
+    syncTargetNumberOfActiveBigLedgerPeers: 30
+    syncTargetNumberOfEstablishedBigLedgerPeers: 50
+    syncTargetNumberOfKnownBigLedgerPeers: 100
+    
+    # Tracing configuration
+    useTraceDispatcher: true
+    turnOnLogging: true
+    turnOnLogMetrics: true
+    traceOptionMetricsPrefix: "cardano.node.metrics."
+    traceOptionNodeName: "cnode"
+    traceOptionPeerFrequency: 2000
+    traceOptionResourceFrequency: 1000
+    
+    # Trace options per component
+    traceOptions:
+      root:
+        backends:
+          stdout: "Stdout HumanFormatColoured"
+        severity: "Notice"
+      blockFetchDecision:
+        severity: "Silence"
+      chainDB:
+        severity: "Info"
+      chainSyncClient:
+        severity: "Warning"
+      forgeLoop:
+        severity: "Info"
+      forgeStateInfo:
+        severity: "Info"
+      mempool:
+        severity: "Info"
+      resources:
+        severity: "Silence"
+  
+  # Topology configuration (P2P bootstrap peers)
+  topology:
+    bootstrapPeers:
+      - address: "backbone.cardano.iog.io"
+        port: 3001
+      - address: "backbone.mainnet.emurgornd.com"
+        port: 3001
+      - address: "backbone.mainnet.cardanofoundation.org"
+        port: 3001
+    
+    localRoots: []
+      # Example for private relays:
+      # - accessPoints:
+      #     - address: "relay1.example.com"
+      #       port: 3001
+      #   advertise: false
+      #   trustable: true
+      #   hotValency: 2
+    
+    publicRoots:
+      - accessPoints: []
+        advertise: false
+    
+    useLedgerAfterSlot: 128908821
+
+# ===========================================
+# FORGE MANAGER V2.0 CONFIGURATION
+# ===========================================
+forgeManager:
+  # Enable forge manager (required for block producers)
+  enabled: false  # Set to true for block producer nodes
+  
+  # Basic configuration
+  nodeSocket: "/ipc/node.socket"
+  metricsPort: 8000
+  socketWaitTimeout: 600
+  sleepInterval: 5
+  logLevel: "INFO"
+  disableSocketCheck: false
+  
+  # Credential paths
+  sourceKeys:
+    kesKey: "/secrets/kes.skey"
+    vrfKey: "/secrets/vrf.skey"
+    opCert: "/secrets/node.cert"
+  
+  targetKeys:
+    kesKey: "/opt/cardano/secrets/kes.skey"
+    vrfKey: "/opt/cardano/secrets/vrf.skey"
+    opCert: "/opt/cardano/secrets/node.cert"
+  
+  # ===========================================
+  # MULTI-TENANT CONFIGURATION
+  # ===========================================
+  multiTenant:
+    # Enable multi-tenant mode (run multiple pools in same cluster)
+    enabled: false
+    
+    # Pool identification (required for multi-tenant)
+    pool:
+      id: ""        # Pool ID (bech32, e.g., pool1abc...)
+      idHex: ""     # Pool ID in hex format (optional)
+      name: ""      # Human-readable pool name
+      ticker: ""    # Pool ticker symbol
+    
+    # Application metadata
+    application:
+      type: "block-producer"  # Application type
+      environment: "production"  # production, staging, development
+  
+  # ===========================================
+  # CLUSTER-WIDE FORGE MANAGEMENT
+  # ===========================================
+  clusterManagement:
+    # Enable cluster-wide coordination (for multi-cluster deployments)
+    enabled: false
+    
+    # Region identifier (required for multi-cluster)
+    region: ""  # e.g., us-east-1, eu-west-1, ap-southeast-1
+    
+    # Priority configuration (1 = highest priority, 999 = lowest)
+    priority: 100
+    
+    # Forge state: Enabled, Disabled, or Priority-based
+    forgeState: "Priority-based"
+    
+    # Health check configuration
+    healthCheck:
+      enabled: false
+      endpoint: ""  # HTTP endpoint to check cluster health
+      interval: 30  # Seconds between health checks
+      timeout: 10   # Request timeout in seconds
+      failureThreshold: 3  # Consecutive failures before penalty
+      headers: {}   # Optional HTTP headers for health check
+        # Authorization: "Bearer token"
+    
+    # Manual override settings
+    override:
+      enabled: false
+      reason: ""
+      expiresAt: ""  # ISO 8601 timestamp
+      forcePriority: null  # Override priority value
+      forceState: ""  # Override forge state
+  
+  # ===========================================
+  # LEGACY CONFIGURATION (Backward Compatibility)
+  # ===========================================
+  legacy:
+    # Legacy lease and CRD configuration
+    lease:
+      name: ""  # Auto-generated if empty: {network}-{pool_short_id}
+      duration: 15  # Lease duration in seconds
+    
+    crd:
+      # CardanoLeader CRD (legacy, local scope)
+      cardanoLeader:
+        enabled: true  # Create CardanoLeader CR instance
+        name: ""  # Auto-generated if empty
+      
+      # CardanoForgeCluster CRD (new, global scope)
+      cardanoForgeCluster:
+        enabled: false  # Auto-enabled if clusterManagement.enabled
+        name: ""  # Auto-generated: {network}-{pool_short_id}-{region}
+  
+  # RBAC configuration
+  rbac:
+    create: true
+  
+  # Service configuration
+  service:
+    enabled: true
+    type: "ClusterIP"
+    port: 8000
+    annotations: {}
+  
+  # Secret configuration
+  secretName: ""  # Defaults to {release-name}-forging-keys
+  
+  # Extra volume mounts
+  extraVolumeMounts: []
+
+# ===========================================
+# MITHRIL SIGNER CONFIGURATION
+# ===========================================
+mithrilSigner:
+  enabled: false  # Enable for block producers
+  port: 9092
+  aggregatorEndpoint: "https://aggregator.release-mainnet.api.mithril.network/aggregator"
+  partyId: ""  # Set to your pool ID
+  
+  # Health checks
+  healthCheck:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 30
+
+# ===========================================
+# SUBMIT API CONFIGURATION
+# ===========================================
+submitApi:
+  enabled: false
+  port: 8090
+  healthPort: 8091
+  skipNodeCheck: true
+  socketTimeout: 30
+  
+  # Health checks
+  healthCheck:
+    enabled: true
+    initialDelaySeconds: 15
+    periodSeconds: 10
+
+# ===========================================
+# STORAGE CONFIGURATION
+# ===========================================
+persistence:
+  enabled: true
+  storageClass: ""  # Use default storage class if empty
+  accessMode: ReadWriteOnce
+  size: 200Gi  # Increase for mainnet (400Gi+ recommended)
+  annotations: {}
+  
+  # Existing PVC (if you want to use an existing volume)
+  existingClaim: ""
+
+# ===========================================
+# RESOURCE CONFIGURATION
+# ===========================================
+resources:
+  cardanoNode:
+    limits:
+      cpu: 2000m
+      memory: 8Gi
+    requests:
+      cpu: 1000m
+      memory: 4Gi
+  
+  forgeManager:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  
+  mithrilSigner:
+    limits:
+      cpu: 200m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 512Mi
+  
+  submitApi:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+# ===========================================
+# SERVICE CONFIGURATION
+# ===========================================
+service:
+  type: ClusterIP
+  annotations: {}
+  
+  # P2P service (typically LoadBalancer for external access)
+  p2p:
+    type: LoadBalancer
+    port: 3001
+    annotations: {}
+      # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+  
+  # Metrics service
+  metrics:
+    type: ClusterIP
+    port: 12798
+    annotations: {}
+  
+  # Submit API service
+  submitApi:
+    type: ClusterIP
+    port: 8090
+    annotations: {}
+  
+  # Mithril service
+  mithril:
+    type: ClusterIP
+    port: 9092
+    annotations: {}
+
+# ===========================================
+# INGRESS CONFIGURATION
+# ===========================================
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  
+  hosts:
+    - host: cardano-submit-api.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: submit-api
+          port: 8090
+  
+  tls: []
+    # - secretName: cardano-submit-tls
+    #   hosts:
+    #     - cardano-submit-api.local
+
+# ===========================================
+# SERVICE ACCOUNT
+# ===========================================
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# ===========================================
+# POD SECURITY CONTEXT
+# ===========================================
+podSecurityContext:
+  fsGroup: 10001
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroupChangePolicy: Always
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: "RuntimeDefault"
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 10001
+
+# ===========================================
+# POD SCHEDULING
+# ===========================================
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Pod anti-affinity for HA (example)
+# affinity:
+#   podAntiAffinity:
+#     preferredDuringSchedulingIgnoredDuringExecution:
+#       - weight: 100
+#         podAffinityTerm:
+#           labelSelector:
+#             matchExpressions:
+#               - key: app.kubernetes.io/name
+#                 operator: In
+#                 values:
+#                   - cardano-node
+#           topologyKey: kubernetes.io/hostname
+
+# ===========================================
+# HEALTH CHECKS
+# ===========================================
+healthChecks:
+  cardanoNode:
+    livenessProbe:
+      enabled: true
+      httpGet:
+        path: /
+        port: 12798
+      initialDelaySeconds: 120
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    
+    readinessProbe:
+      enabled: true
+      httpGet:
+        path: /
+        port: 12798
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+# ===========================================
+# MONITORING
+# ===========================================
+monitoring:
+  enabled: true
+  
+  serviceMonitor:
+    enabled: false  # Enable if you have Prometheus Operator
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    annotations: {}
+
+# ===========================================
+# NETWORK POLICY
+# ===========================================
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress: []
+  egress: []
+
+# ===========================================
+# SECRETS CONFIGURATION
+# ===========================================
+# WARNING: For production, use external secret management!
+secrets:
+  create: false  # Set to true only for testing
+  annotations: {}
+  
+  # Base64 encoded secret data (only used if create: true)
+  data:
+    kesKey: ""   # Base64 encoded KES signing key
+    vrfKey: ""   # Base64 encoded VRF signing key
+    opCert: ""   # Base64 encoded operational certificate
+
+# ===========================================
+# CARDANO-FORGE-CRDS SUBCHART
+# ===========================================
+cardano-forge-crds:
+  enabled: true  # Install CRDs as dependency
+  
+  crds:
+    create: true
+    cardanoLeader:
+      enabled: true
+      keepOnDelete: true
+    cardanoForgeCluster:
+      enabled: true
+      keepOnDelete: true
+  
+  rbac:
+    create: true
+
+# ===========================================
+# EXTRA CONFIGURATION
+# ===========================================
+# Extra environment variables for cardano-node
+extraEnvVars: []
+  # - name: CUSTOM_VAR
+  #   value: "custom-value"
+
+# Extra volumes
+extraVolumes: []
+  # - name: custom-config
+  #   configMap:
+  #     name: custom-config
+
+# Extra volume mounts for cardano-node
+extraVolumeMounts: []
+  # - name: custom-config
+  #   mountPath: /etc/custom
+  #   readOnly: true
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod labels
+podLabels: {}
+
+# Update strategy
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1

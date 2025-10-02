@@ -1,0 +1,54 @@
+{{- if and (eq (include "cardano-node.forgeManagerEnabled" .) "true") .Values.forgeManager.rbac.create -}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "cardano-node.fullname" . }}-forge-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+  # Coordination leases for leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # CardanoLeader CRD (legacy, local scope)
+  - apiGroups: ["cardano.io"]
+    resources: ["cardanoleaders"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  
+  - apiGroups: ["cardano.io"]
+    resources: ["cardanoleaders/status"]
+    verbs: ["get", "update", "patch"]
+  
+  {{- if eq (include "cardano-node.clusterManagementEnabled" .) "true" }}
+  # CardanoForgeCluster CRD (new, global scope)
+  - apiGroups: ["cardano.io"]
+    resources: ["cardanoforgeclusters"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  
+  - apiGroups: ["cardano.io"]
+    resources: ["cardanoforgeclusters/status"]
+    verbs: ["get", "update", "patch"]
+  {{- end }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "cardano-node.fullname" . }}-forge-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "cardano-node.fullname" . }}-forge-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "cardano-node.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
