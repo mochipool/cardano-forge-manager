@@ -30,7 +30,7 @@ image:
   forgeManager:
     repository: ghcr.io/mochipool/cardano-forge-manager
     pullPolicy: IfNotPresent
-    tag: "0.1.4-alpha"
+    tag: "0.1.6-alpha"
   
   mithrilSigner:
     repository: ghcr.io/input-output-hk/mithril-signer

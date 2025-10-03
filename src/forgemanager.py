@@ -166,6 +166,8 @@ startup_credentials_provisioned = False  # Track if startup credentials are prov
 # CRD state tracking to reduce unnecessary updates
 last_crd_leader_state = None
 last_crd_forging_state = None
+# Track whether we've synced our in-memory CRD state with the live CRD
+crd_status_initialized = False
 
 # -----------------------------
 # Process Management Functions
@@ -420,13 +422,47 @@ def update_leader_status(is_leader: bool):
     """Update CardanoLeader CRD status with current leadership and forging state.
     
     Only updates the CRD when there are actual state changes to reduce API churn.
+    Ensures the first update syncs with the live CRD to avoid stale in-memory state.
     """
-    global last_crd_leader_state, last_crd_forging_state
+    global last_crd_leader_state, last_crd_forging_state, crd_status_initialized
     
     # Get forging permission from cluster manager
     forging_allowed, forging_reason = cluster_manager.should_allow_forging()
     # Only forge if we're leader AND cluster allows forging
     forging_enabled = is_leader and forging_allowed
+    
+    # On first run, initialize in-memory state from the live CRD to avoid false "unchanged" skips
+    if not crd_status_initialized:
+        try:
+            current_crd = custom_objects.get_namespaced_custom_object_status(
+                group=CRD_GROUP,
+                version=CRD_VERSION,
+                namespace=NAMESPACE,
+                plural=CRD_PLURAL,
+                name=CRD_NAME,
+            )
+            live_status = current_crd.get("status", {}) if isinstance(current_crd, dict) else {}
+            live_leader = live_status.get("leaderPod", "")
+            live_forging = bool(live_status.get("forgingEnabled", False))
+            last_crd_leader_state = live_leader
+            last_crd_forging_state = live_forging
+            crd_status_initialized = True
+            logger.debug(
+                f"Initialized CRD cache from live status: leader={live_leader or 'none'}, forging={live_forging}"
+            )
+        except ApiException as e:
+            if e.status == 404:
+                # CRD not found yet - force an update below
+                last_crd_leader_state = None
+                last_crd_forging_state = None
+                crd_status_initialized = True
+                logger.debug("CRD not found; will create/update status on first write")
+            else:
+                logger.warning(f"Could not read live CRD status (will proceed to update): {e}")
+                # Force an update attempt
+                last_crd_leader_state = None
+                last_crd_forging_state = None
+                crd_status_initialized = True
     
     # Check if state has actually changed
     current_leader_pod = POD_NAME if is_leader else ""
