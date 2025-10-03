@@ -1,0 +1,41 @@
+{{- $network := .Values.cardanoNode.network | default "mainnet" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cardano-node.fullname" . }}-genesis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    cardano.io/network: {{ $network }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  # Genesis file URLs - can be used as environment variables
+  # Network: {{ $network }}
+  # Values can be overridden via .Values.cardanoNode.genesisUrls.*
+  {{- $defaultByron := "" }}
+  {{- $defaultShelley := "" }}
+  {{- $defaultAlonzo := "" }}
+  {{- $defaultConway := "" }}
+  {{- if eq $network "mainnet" }}
+    {{- $defaultByron = "https://book.world.dev.cardano.org/environments/mainnet/byron-genesis.json" }}
+    {{- $defaultShelley = "https://book.world.dev.cardano.org/environments/mainnet/shelley-genesis.json" }}
+    {{- $defaultAlonzo = "https://book.world.dev.cardano.org/environments/mainnet/alonzo-genesis.json" }}
+    {{- $defaultConway = "https://book.world.dev.cardano.org/environments/mainnet/conway-genesis.json" }}
+  {{- else if eq $network "preprod" }}
+    {{- $defaultByron = "https://book.world.dev.cardano.org/environments/preprod/byron-genesis.json" }}
+    {{- $defaultShelley = "https://book.world.dev.cardano.org/environments/preprod/shelley-genesis.json" }}
+    {{- $defaultAlonzo = "https://book.world.dev.cardano.org/environments/preprod/alonzo-genesis.json" }}
+    {{- $defaultConway = "https://book.world.dev.cardano.org/environments/preprod/conway-genesis.json" }}
+  {{- else if eq $network "preview" }}
+    {{- $defaultByron = "https://book.world.dev.cardano.org/environments/preview/byron-genesis.json" }}
+    {{- $defaultShelley = "https://book.world.dev.cardano.org/environments/preview/shelley-genesis.json" }}
+    {{- $defaultAlonzo = "https://book.world.dev.cardano.org/environments/preview/alonzo-genesis.json" }}
+    {{- $defaultConway = "https://book.world.dev.cardano.org/environments/preview/conway-genesis.json" }}
+  {{- end }}
+  BYRON_URL: {{ .Values.cardanoNode.genesisUrls.byron | default $defaultByron | quote }}
+  SHELLEY_URL: {{ .Values.cardanoNode.genesisUrls.shelley | default $defaultShelley | quote }}
+  ALONZO_URL: {{ .Values.cardanoNode.genesisUrls.alonzo | default $defaultAlonzo | quote }}
+  CONWAY_URL: {{ .Values.cardanoNode.genesisUrls.conway | default $defaultConway | quote }}

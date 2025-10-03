@@ -145,9 +145,10 @@ def validate_multi_tenant_config() -> Tuple[bool, str]:
 class ClusterForgeManager:
     """Manages cluster-wide forge state using CardanoForgeCluster CRD."""
 
-    def __init__(self, custom_objects_api: client.CustomObjectsApi, pod_name: str = ""):
+    def __init__(self, custom_objects_api: client.CustomObjectsApi, pod_name: str = "", namespace: str = ""):
         self.api = custom_objects_api
         self._pod_name = pod_name or os.environ.get("POD_NAME", "")
+        self._namespace = namespace or os.environ.get("NAMESPACE", "default")
 
         # Validate multi-tenant configuration
         config_valid, config_message = validate_multi_tenant_config()
@@ -233,6 +234,12 @@ class ClusterForgeManager:
     def should_allow_local_leadership(self) -> Tuple[bool, str]:
         """
         Determine if local leadership election should be allowed.
+        
+        IMPORTANT: This method determines whether a pod can become the leader
+        for operational visibility and CRD management. It should almost always
+        return True to ensure proper reconciliation and status updates.
+        
+        The actual forging decision is handled separately via should_allow_forging().
 
         Returns:
             Tuple[bool, str]: (allowed, reason)
@@ -258,6 +265,41 @@ class ClusterForgeManager:
             self._effective_priority = effective_priority
             self._cluster_forge_enabled = effective_state in ("Enabled", "Priority-based")
 
+            # ALWAYS allow leadership for operational visibility and CRD updates
+            # The actual forging decision is made separately in should_allow_forging()
+            return True, f"leadership_allowed_for_visibility_effective_state_{effective_state.lower()}"
+
+        except Exception as e:
+            logger.error(f"Error evaluating cluster leadership: {e}")
+            return True, "evaluation_error"
+
+    def should_allow_forging(self) -> Tuple[bool, str]:
+        """
+        Determine if forging should be enabled for the current leader.
+        
+        This method evaluates the cluster-wide forging policy and returns
+        whether the current leader should actually forge blocks.
+        
+        Returns:
+            Tuple[bool, str]: (forging_allowed, reason)
+        """
+        if not self.enabled:
+            return True, "cluster_management_disabled"
+
+        if not self._current_cluster_crd:
+            # If CRD doesn't exist, default to allowing forging (backward compatibility)
+            return True, "no_cluster_crd"
+
+        try:
+            spec = self._current_cluster_crd.get("spec", {})
+            forge_state = spec.get("forgeState", "Priority-based")
+            base_priority = spec.get("priority", self.priority)
+            
+            # Calculate effective state using the same logic as status updates
+            effective_state, effective_priority, calc_reason, calc_message = self._calculate_effective_state_and_priority(
+                forge_state, base_priority
+            )
+
             if effective_state == "Disabled":
                 return False, "cluster_forge_disabled"
 
@@ -276,7 +318,7 @@ class ClusterForgeManager:
             return True, "default_allow"
 
         except Exception as e:
-            logger.error(f"Error evaluating cluster leadership: {e}")
+            logger.error(f"Error evaluating cluster forging policy: {e}")
             return True, "evaluation_error"
 
     def update_leader_status(self, pod_name: Optional[str], is_leader: bool):
@@ -288,9 +330,10 @@ class ClusterForgeManager:
             # Calculate comprehensive status update including all required fields
             status_patch = self._build_comprehensive_status_update(pod_name, is_leader)
 
-            self.api.patch_cluster_custom_object_status(
+            self.api.patch_namespaced_custom_object_status(
                 group=CRD_GROUP,
                 version=CRD_VERSION,
+                namespace=self._namespace,
                 plural=CRD_PLURAL,
                 name=self.cluster_id,
                 body=status_patch,
@@ -338,9 +381,10 @@ class ClusterForgeManager:
         """Ensure CardanoForgeCluster CRD exists for this cluster."""
         try:
             # Try to get existing CRD
-            self._current_cluster_crd = self.api.get_cluster_custom_object(
+            self._current_cluster_crd = self.api.get_namespaced_custom_object(
                 group=CRD_GROUP,
                 version=CRD_VERSION,
+                namespace=self._namespace,
                 plural=CRD_PLURAL,
                 name=self.cluster_id,
             )
@@ -441,8 +485,12 @@ class ClusterForgeManager:
         }
 
         try:
-            self._current_cluster_crd = self.api.create_cluster_custom_object(
-                group=CRD_GROUP, version=CRD_VERSION, plural=CRD_PLURAL, body=crd_body
+            self._current_cluster_crd = self.api.create_namespaced_custom_object(
+                group=CRD_GROUP, 
+                version=CRD_VERSION, 
+                namespace=self._namespace,
+                plural=CRD_PLURAL, 
+                body=crd_body
             )
             logger.info(f"Created CardanoForgeCluster CRD: {self.cluster_id}")
 
@@ -458,9 +506,10 @@ class ClusterForgeManager:
             try:
                 w = watch.Watch()
                 for event in w.stream(
-                    self.api.list_cluster_custom_object,
+                    self.api.list_namespaced_custom_object,
                     group=CRD_GROUP,
                     version=CRD_VERSION,
+                    namespace=self._namespace,
                     plural=CRD_PLURAL,
                     timeout_seconds=30,
                 ):
@@ -609,9 +658,10 @@ class ClusterForgeManager:
                 }
             }
 
-            self.api.patch_cluster_custom_object_status(
+            self.api.patch_namespaced_custom_object_status(
                 group=CRD_GROUP,
                 version=CRD_VERSION,
+                namespace=self._namespace,
                 plural=CRD_PLURAL,
                 name=self.cluster_id,
                 body=status_patch,
@@ -774,9 +824,10 @@ class ClusterForgeManager:
             # Build and apply comprehensive status update
             status_patch = self._build_comprehensive_status_update(current_leader, is_leader)
 
-            self.api.patch_cluster_custom_object_status(
+            self.api.patch_namespaced_custom_object_status(
                 group=CRD_GROUP,
                 version=CRD_VERSION,
+                namespace=self._namespace,
                 plural=CRD_PLURAL,
                 name=self.cluster_id,
                 body=status_patch,
@@ -799,13 +850,13 @@ cluster_manager: Optional[ClusterForgeManager] = None
 
 
 def initialize_cluster_manager(
-    custom_objects_api: client.CustomObjectsApi, pod_name: str = "",
+    custom_objects_api: client.CustomObjectsApi, pod_name: str = "", namespace: str = ""
 ) -> Optional[ClusterForgeManager]:
     """Initialize the global cluster manager instance."""
     global cluster_manager
 
     if cluster_manager is None:
-        cluster_manager = ClusterForgeManager(custom_objects_api, pod_name)
+        cluster_manager = ClusterForgeManager(custom_objects_api, pod_name, namespace)
         cluster_manager.start()
 
     return cluster_manager
@@ -825,6 +876,22 @@ def should_allow_local_leadership() -> Tuple[bool, str]:
     """
     if cluster_manager and cluster_manager.enabled:
         return cluster_manager.should_allow_local_leadership()
+
+    return True, "cluster_management_disabled"
+
+
+def should_allow_forging() -> Tuple[bool, str]:
+    """
+    Check if forging should be enabled based on cluster-wide policy.
+    
+    This is separate from leadership election - a pod can be the leader
+    but have forging disabled based on cluster policy.
+
+    Returns:
+        Tuple[bool, str]: (forging_allowed, reason)
+    """
+    if cluster_manager and cluster_manager.enabled:
+        return cluster_manager.should_allow_forging()
 
     return True, "cluster_management_disabled"
 

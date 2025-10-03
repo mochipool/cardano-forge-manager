@@ -1,0 +1,63 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "cardano-node.fullname" . }}
+  namespace: {{ .Values.monitoring.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "cardano-node.selectorLabels" . | nindent 6 }}
+      {{- with .Values.monitoring.serviceMonitor.selector }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  endpoints:
+    # Cardano Node metrics
+    - port: metrics
+      path: {{ .Values.monitoring.serviceMonitor.cardanoNode.path | default "/metrics" }}
+      interval: {{ .Values.monitoring.serviceMonitor.cardanoNode.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.cardanoNode.scrapeTimeout | default "10s" }}
+      {{- with .Values.monitoring.serviceMonitor.cardanoNode.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.monitoring.serviceMonitor.cardanoNode.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- if .Values.forgeManager.enabled }}
+    # Forge Manager metrics
+    - port: forge-metrics
+      path: {{ .Values.monitoring.serviceMonitor.forgeManager.path | default "/metrics" }}
+      interval: {{ .Values.monitoring.serviceMonitor.forgeManager.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.forgeManager.scrapeTimeout | default "10s" }}
+      {{- with .Values.monitoring.serviceMonitor.forgeManager.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.monitoring.serviceMonitor.forgeManager.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if .Values.monitoring.serviceMonitor.jobLabel }}
+  jobLabel: {{ .Values.monitoring.serviceMonitor.jobLabel }}
+  {{- end }}
+  {{- if .Values.monitoring.serviceMonitor.targetLabels }}
+  targetLabels:
+    {{- toYaml .Values.monitoring.serviceMonitor.targetLabels | nindent 4 }}
+  {{- end }}
+{{- end }}

@@ -150,7 +150,7 @@ custom_objects = client.CustomObjectsApi()
 coord_api = client.CoordinationV1Api()
 
 # Initialize cluster management
-cluster_manager.initialize_cluster_manager(custom_objects, POD_NAME)
+cluster_manager.initialize_cluster_manager(custom_objects, POD_NAME, NAMESPACE)
 
 # -----------------------------
 # Global State
@@ -411,15 +411,19 @@ def forfeit_leadership():
 
 
 def update_leader_status(is_leader: bool):
-    """Update CardanoLeader CRD status with current leadership state."""
-    # Only update the lease if we are a candidate for leadership
-    if not is_leader:
-        return
-
+    """Update CardanoLeader CRD status with current leadership and forging state."""
+    # Always update CRD status to reflect current leadership state
+    # but distinguish between leadership and forging permission
+    
+    # Get forging permission from cluster manager
+    forging_allowed, forging_reason = cluster_manager.should_allow_forging()
+    # Only forge if we're leader AND cluster allows forging
+    forging_enabled = is_leader and forging_allowed
+    
     status_body = {
         "status": {
             "leaderPod": POD_NAME if is_leader else "",
-            "forgingEnabled": is_leader,
+            "forgingEnabled": forging_enabled,
             "lastTransitionTime": datetime.now(timezone.utc).isoformat(),
         }
     }
@@ -433,12 +437,12 @@ def update_leader_status(is_leader: bool):
             body=status_body,
         )
         logger.info(
-            f"CRD status updated: leader={POD_NAME if is_leader else 'none'}, forgingEnabled={is_leader}"
+            f"CRD status updated: leader={POD_NAME if is_leader else 'none'}, forgingEnabled={forging_enabled} (cluster allows: {forging_allowed}, reason: {forging_reason})"
         )
 
         # Also update cluster CRD if cluster management is enabled
         cluster_manager.update_cluster_leader_status(
-            POD_NAME if is_leader else None, is_leader
+            POD_NAME if is_leader else None, forging_enabled
         )
 
     except ApiException as e:
@@ -446,7 +450,12 @@ def update_leader_status(is_leader: bool):
 
 
 def update_metrics(is_leader: bool):
-    """Update Prometheus metrics with current state."""
+    """Update Prometheus metrics with current leadership and forging state."""
+    # Get forging permission from cluster manager
+    forging_allowed, forging_reason = cluster_manager.should_allow_forging()
+    # Only forge if we're leader AND cluster allows forging
+    forging_enabled_actual = is_leader and forging_allowed
+    
     # Use multi-tenant labels
     pool_id_short = POOL_ID[:10] if POOL_ID else "unknown"
     labels = {
@@ -457,7 +466,7 @@ def update_metrics(is_leader: bool):
     }
 
     leader_status.labels(**labels).set(1 if is_leader else 0)
-    forging_enabled.labels(**labels).set(1 if is_leader else 0)
+    forging_enabled.labels(**labels).set(1 if forging_enabled_actual else 0)
 
     # Update cluster-wide metrics if available
     cluster_metrics = cluster_manager.get_cluster_metrics()
@@ -482,7 +491,7 @@ def update_metrics(is_leader: bool):
             cluster_metrics.get("effective_priority", 999)
         )
 
-    logger.debug(f"Metrics updated: leader={is_leader}, forging={is_leader}")
+    logger.debug(f"Metrics updated: leader={is_leader}, forging={forging_enabled_actual} (cluster allows: {forging_allowed}, reason: {forging_reason})")
 
 
 def copy_secret(src: str, dest: str, file_type: str) -> bool:
@@ -558,8 +567,12 @@ def wait_for_socket(timeout: int = 0) -> bool:
 
 
 def ensure_secrets(is_leader: bool, send_sighup: bool = True) -> bool:
-    """Ensure credential state matches leadership status."""
+    """Ensure credential state matches forging permission."""
     credentials_changed = False
+    
+    # Check if we should actually forge (leader + cluster allows forging)
+    forging_allowed, forging_reason = cluster_manager.should_allow_forging()
+    should_have_credentials = is_leader and forging_allowed
 
     # Define credential files using direct environment variables
     credential_files = [
@@ -567,14 +580,16 @@ def ensure_secrets(is_leader: bool, send_sighup: bool = True) -> bool:
         (SOURCE_VRF_KEY, TARGET_VRF_KEY, "vrf"),
         (SOURCE_OP_CERT, TARGET_OP_CERT, "opcert"),
     ]
-    if is_leader:
-        logger.info("Ensuring credentials are present for leader")
+    
+    if should_have_credentials:
+        logger.info(f"Ensuring credentials are present for forging (leader: {is_leader}, cluster allows: {forging_allowed}, reason: {forging_reason})")
         for src, dest, file_type in credential_files:
             if not os.path.exists(dest) or not files_identical(src, dest):
                 if copy_secret(src, dest, file_type):
                     credentials_changed = True
     else:
-        logger.info("Ensuring credentials are absent for non-leader")
+        reason = "not leader" if not is_leader else f"cluster disallows forging ({forging_reason})"
+        logger.info(f"Ensuring credentials are absent ({reason})")
         for _, dest, file_type in credential_files:
             if os.path.exists(dest):
                 if remove_file(dest, file_type):
@@ -582,7 +597,7 @@ def ensure_secrets(is_leader: bool, send_sighup: bool = True) -> bool:
 
     # Send SIGHUP if credentials changed
     if credentials_changed and send_sighup:
-        reason = "enable_forging" if is_leader else "disable_forging"
+        reason = "enable_forging" if should_have_credentials else "disable_forging"
         send_sighup_to_cardano_node(reason)
 
     return credentials_changed
@@ -718,19 +733,12 @@ def patch_lease(lease):
 
 
 def try_acquire_leader() -> bool:
-    """Attempt to acquire leadership via lease mechanism with cluster-wide checks."""
+    """Attempt to acquire leadership via lease mechanism."""
     global current_leadership_state
 
-    # Check cluster-wide forge management first (extension)
-    allowed, reason = cluster_manager.should_allow_local_leadership()
-    if not allowed:
-        logger.info(f"Local leadership blocked by cluster management: {reason}")
-        # Ensure we're not leader if cluster blocks us
-        if current_leadership_state:
-            current_leadership_state = False
-            ensure_secrets(is_leader=False)
-            update_metrics(is_leader=False)
-        return False
+    # Note: With the new design, leadership is always allowed for operational visibility.
+    # Forging permission is handled separately in ensure_secrets() and update_*() functions.
+    # This ensures the CRD is always kept up-to-date even when forging is disabled.
 
     try:
         lease = get_lease()

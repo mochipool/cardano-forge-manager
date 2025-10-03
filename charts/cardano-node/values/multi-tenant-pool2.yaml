@@ -1,0 +1,233 @@
+# Multi-Tenant Deployment - Pool 2
+# This configuration demonstrates running multiple independent pools in the same Kubernetes cluster
+# Each pool gets its own leases, CRDs, and metrics - completely isolated
+
+# ===========================================
+# REPLICA CONFIGURATION
+# ===========================================
+replicaCount: 3
+
+# ===========================================
+# CARDANO NODE CONFIGURATION
+# ===========================================
+cardanoNode:
+  network: "mainnet"
+  magic: "764824073"
+  
+  # Block producer mode
+  blockProducer: true
+  startAsNonProducing: true
+  
+  # Disable Mithril for production
+  mithril:
+    enabled: false
+    restoreSnapshot: false
+
+# ===========================================
+# FORGE MANAGER V2.0 - MULTI-TENANT MODE
+# ===========================================
+forgeManager:
+  enabled: true
+  
+  # Basic settings
+  metricsPort: 8000
+  socketWaitTimeout: 120
+  sleepInterval: 10
+  logLevel: "INFO"
+  
+  # ===========================================
+  # MULTI-TENANT CONFIGURATION - POOL 2
+  # ===========================================
+  multiTenant:
+    enabled: true  # REQUIRED for multi-tenant
+    
+    pool:
+      # POOL 2 identification - MUST BE DIFFERENT FROM POOL 1
+      id: "pool1xyz2222222222222222222222222222222222222222222222"  # Replace with Pool 2 ID
+      idHex: ""  # Optional
+      name: "Cardano Pool 2"
+      ticker: "POOL2"
+    
+    application:
+      type: "block-producer"
+      environment: "production"
+  
+  # ===========================================
+  # CLUSTER MANAGEMENT
+  # ===========================================
+  # Optional: Can also enable cluster management per pool
+  clusterManagement:
+    enabled: false  # Single cluster for this example
+  
+  # Legacy CRD configuration
+  legacy:
+    crd:
+      cardanoLeader:
+        enabled: true
+        # Name will be auto-generated: cardano-leader-mainnet-pool1xyz
+
+# ===========================================
+# STORAGE CONFIGURATION
+# ===========================================
+persistence:
+  enabled: true
+  size: 400Gi
+  # storageClass: "fast-ssd"
+
+# ===========================================
+# RESOURCE CONFIGURATION
+# ===========================================
+resources:
+  cardanoNode:
+    limits:
+      cpu: 4000m
+      memory: 24Gi
+    requests:
+      cpu: 2000m
+      memory: 20Gi
+  
+  forgeManager:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+# ===========================================
+# SERVICE CONFIGURATION
+# ===========================================
+service:
+  p2p:
+    type: LoadBalancer
+    annotations: {}
+
+# ===========================================
+# MONITORING
+# ===========================================
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels:
+      pool: pool2
+
+# ===========================================
+# POD LABELS
+# ===========================================
+podLabels:
+  pool-id: "pool1xyz"
+  pool-ticker: "POOL2"
+  tenant: "pool2"
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "12798"
+
+# ===========================================
+# POD ANTI-AFFINITY
+# ===========================================
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - cardano-node
+              - key: pool-id
+                operator: In
+                values:
+                  - pool1xyz
+          topologyKey: kubernetes.io/hostname
+
+# ===========================================
+# DEPLOYMENT INSTRUCTIONS
+# ===========================================
+# This is Pool 2 in a multi-tenant setup (see multi-tenant-pool1.yaml for Pool 1)
+#
+# Prerequisites:
+# - CRDs already installed (helm install cardano-forge-crds ...)
+# - Namespace 'cardano-multi-tenant' already created
+# - Pool 1 already deployed (optional, but demonstrates isolation)
+#
+# 1. Create secrets for Pool 2:
+#    kubectl create secret generic pool2-forging-keys \
+#      --from-file=kes.skey=path/to/pool2/kes.skey \
+#      --from-file=vrf.skey=path/to/pool2/vrf.skey \
+#      --from-file=node.cert=path/to/pool2/node.cert \
+#      --namespace cardano-multi-tenant
+#
+# 2. Deploy Pool 2:
+#    helm install cardano-pool2 charts/cardano-node \
+#      --namespace cardano-multi-tenant \
+#      --set forgeManager.secretName=pool2-forging-keys \
+#      -f values/multi-tenant-pool2.yaml
+#
+# 3. Verify both pools running:
+#    kubectl get pods -n cardano-multi-tenant
+#    # Should see:
+#    #   cardano-pool1-0, cardano-pool1-1, cardano-pool1-2
+#    #   cardano-pool2-0, cardano-pool2-1, cardano-pool2-2
+#
+# 4. Verify separate leases:
+#    kubectl get leases -n cardano-multi-tenant
+#    # Output:
+#    #   cardano-leader-mainnet-pool1abc  (for Pool 1)
+#    #   cardano-leader-mainnet-pool1xyz  (for Pool 2)
+#
+# 5. Verify separate CRDs:
+#    kubectl get cardanoleaders -n cardano-multi-tenant
+#    # Output:
+#    #   cardano-leader-mainnet-pool1abc  (for Pool 1)
+#    #   cardano-leader-mainnet-pool1xyz  (for Pool 2)
+#
+# 6. Check Pool 2 leader status:
+#    kubectl get cardanoleaders cardano-leader-mainnet-pool1xyz \
+#      -n cardano-multi-tenant -o yaml
+#
+# 7. Monitor Pool 2 metrics separately:
+#    kubectl port-forward svc/cardano-pool2-forge-metrics 8002:8000 -n cardano-multi-tenant
+#    curl localhost:8002/metrics | grep cardano_forging_enabled
+#    # Should show pool_id="pool1xyz..."
+#
+# 8. Test complete isolation:
+#    # Pool 1 and Pool 2 operate completely independently
+#    # Each has its own:
+#    # - Kubernetes Lease for local leader election
+#    # - CardanoLeader CRD for status tracking
+#    # - Metrics with unique pool_id labels
+#    # - StatefulSet and pods
+#    # - Services
+#    #
+#    # Deleting/restarting one pool does NOT affect the other
+#
+# ===========================================
+# MULTI-TENANT WITH CLUSTER MANAGEMENT
+# ===========================================
+# You can also combine multi-tenant with cluster management to run
+# Pool 2 across multiple regions. Example:
+#
+# US-East-1 cluster:
+#   - Pool 1 (priority 1)
+#   - Pool 2 (priority 1)
+#
+# EU-West-1 cluster:
+#   - Pool 1 (priority 2)
+#   - Pool 2 (priority 2)
+#
+# Each pool manages its own cross-cluster coordination independently!
+#
+# To enable cluster management for Pool 2:
+# forgeManager:
+#   clusterManagement:
+#     enabled: true
+#     region: "us-east-1"
+#     priority: 1
+#     healthCheck:
+#       enabled: true
+#       endpoint: "http://pool2-health-service:8080/health"

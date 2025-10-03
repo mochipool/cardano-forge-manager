@@ -1,0 +1,22 @@
+{{- if and (eq (include "cardano-node.forgeManagerEnabled" .) "true") .Values.forgeManager.legacy.crd.cardanoLeader.enabled -}}
+{{- include "cardano-node.validateMultiTenant" . -}}
+---
+apiVersion: cardano.io/v1
+kind: CardanoLeader
+metadata:
+  name: {{ include "cardano-node.cardanoLeaderName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cardano-node.labels" . | nindent 4 }}
+    app.kubernetes.io/component: leader-election
+    {{- if eq (include "cardano-node.multiTenantEnabled" .) "true" }}
+    cardano.io/network: {{ .Values.cardanoNode.network | quote }}
+    cardano.io/pool-id: {{ .Values.forgeManager.multiTenant.pool.id | quote }}
+    {{- end }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec: {}
+status: {}
+{{- end }}

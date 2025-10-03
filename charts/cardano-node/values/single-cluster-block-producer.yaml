@@ -1,0 +1,142 @@
+# Single-Cluster Block Producer Configuration
+# This configuration deploys a high-availability block producer within a single Kubernetes cluster
+# Uses leader election with 3 replicas for redundancy
+
+# ===========================================
+# REPLICA CONFIGURATION
+# ===========================================
+# 3 replicas provide HA - only one will forge at a time
+replicaCount: 3
+
+# ===========================================
+# CARDANO NODE CONFIGURATION
+# ===========================================
+cardanoNode:
+  network: "mainnet"
+  magic: "764824073"
+  
+  # Block producer mode
+  blockProducer: true
+  startAsNonProducing: true  # Forge manager will enable forging on leader
+  
+  # Disable Mithril snapshot for production (already synced)
+  mithril:
+    enabled: false
+    restoreSnapshot: false
+
+# ===========================================
+# FORGE MANAGER CONFIGURATION
+# ===========================================
+forgeManager:
+  enabled: true  # Required for block producers
+  
+  # Basic settings
+  metricsPort: 8000
+  socketWaitTimeout: 120  # Increased timeout for production
+  sleepInterval: 10       # Slower polling for stability
+  logLevel: "INFO"
+  
+  # Multi-tenant mode disabled (single pool in cluster)
+  multiTenant:
+    enabled: false
+  
+  # Cluster management disabled (single cluster)
+  clusterManagement:
+    enabled: false
+  
+  # Legacy configuration (backward compatible)
+  legacy:
+    lease:
+      name: ""  # Auto-generated
+      duration: 15
+    crd:
+      cardanoLeader:
+        enabled: true  # Create CardanoLeader CR
+
+# ===========================================
+# STORAGE CONFIGURATION
+# ===========================================
+persistence:
+  enabled: true
+  size: 400Gi  # Mainnet requires substantial storage
+  # storageClass: "fast-ssd"  # Uncomment and specify your storage class
+
+# ===========================================
+# RESOURCE CONFIGURATION
+# ===========================================
+resources:
+  cardanoNode:
+    limits:
+      cpu: 4000m
+      memory: 24Gi
+    requests:
+      cpu: 2000m
+      memory: 20Gi
+  
+  forgeManager:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+# ===========================================
+# SERVICE CONFIGURATION
+# ===========================================
+service:
+  p2p:
+    type: LoadBalancer
+    annotations:
+      # AWS example - adjust for your cloud provider
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+
+# ===========================================
+# MONITORING
+# ===========================================
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: false  # Set to true if using Prometheus Operator
+    interval: 30s
+    labels:
+      release: prometheus
+
+# ===========================================
+# POD ANTI-AFFINITY
+# ===========================================
+# Spread pods across different nodes for better HA
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - cardano-node
+          topologyKey: kubernetes.io/hostname
+
+# ===========================================
+# NOTES
+# ===========================================
+# BEFORE DEPLOYING:
+# 1. Create secret with forging keys:
+#    kubectl create secret generic cardano-forging-keys \
+#      --from-file=kes.skey=path/to/kes.skey \
+#      --from-file=vrf.skey=path/to/vrf.skey \
+#      --from-file=node.cert=path/to/node.cert \
+#      --namespace cardano-mainnet
+#
+# 2. Install CRDs:
+#    helm install cardano-forge-crds charts/cardano-forge-crds \
+#      --namespace cardano-system --create-namespace
+#
+# 3. Deploy this chart:
+#    helm install cardano-bp charts/cardano-node \
+#      --namespace cardano-mainnet \
+#      --create-namespace \
+#      -f values/single-cluster-block-producer.yaml

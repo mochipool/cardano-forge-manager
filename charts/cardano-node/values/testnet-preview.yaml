@@ -1,0 +1,248 @@
+# Testnet (Preview) Block Producer
+# This configuration is optimized for testing and development on the preview testnet
+# Lower resource requirements and faster sync with Mithril
+
+# ===========================================
+# REPLICA CONFIGURATION
+# ===========================================
+# Fewer replicas for testnet
+replicaCount: 1
+
+# ===========================================
+# CARDANO NODE CONFIGURATION
+# ===========================================
+cardanoNode:
+  network: "preview"
+  magic: "2"
+  
+  # Block producer mode
+  blockProducer: true
+  startAsNonProducing: true
+  
+  # Enable Mithril for fast initial sync
+  mithril:
+    enabled: true
+    restoreSnapshot: true
+    aggregatorEndpoint: "https://aggregator.pre-release-preview.api.mithril.network/aggregator"
+    genesisVerificationKey: "5b3132372c37332c3132342c3136312c362c3133372c3133312c3231332c3230372c3131372c3139382c38352c3137362c3139392c3136322c3234312c36382c3132332c3131392c3134352c31332c3233322c3234332c34392c3232392c322c3234392c3230352c3230352c33392c3233352c34345d"
+    ancillaryVerificationKey: "5b3138392c3139322c3231362c3135302c3131342c3231362c3233372c3231302c34352c31382c32312c3139362c3230382c3234362c3134362c322c3235322c3234332c3235312c3139372c32382c3135372c3230342c3134352c33302c31342c3232382c3136382c3132392c38332c3133362c33365d"
+
+
+  topology:
+    bootstrapPeers:
+      - address: "preview-node.play.dev.cardano.org"
+        port: 3001
+    localRoots:
+      # - accessPoints:
+      #     - address: "127.0.0.1"
+      #       port: 6000
+      #       description: "replace-this-with-BP"
+      #     - address: "127.0.0.1"
+      #       port: 6001
+      #       description: "replace-this-with-relay"
+      #   advertise: false
+      #   trustable: true
+      #   hotValency: 2
+      - accessPoints:
+          - address: "preview-test.ahlnet.nu"
+            port: 2102
+            pool: "AHL"
+          - address: "95.216.173.194"
+            port: 16000
+            pool: "HOM1"
+          - address: "tn-preview.psilobyte.io"
+            port: 4201
+            pool: "PSBT"
+          - address: "tn-preview2.psilobyte.io"
+            port: 4202
+            pool: "PSBT"
+        advertise: false
+        trustable: false
+        hotValency: 2
+        warmValency: 3
+    publicRoots:
+      - accessPoints: []
+        advertise: false
+    useLedgerAfterSlot: 53827185
+
+# ===========================================
+# FORGE MANAGER V2.0
+# ===========================================
+forgeManager:
+  enabled: true
+  
+  # Basic settings
+  metricsPort: 8000
+  socketWaitTimeout: 120
+  sleepInterval: 10
+  logLevel: "DEBUG"  # More verbose for testing
+  
+  # Single-tenant testnet deployment
+  multiTenant:
+    enabled: true
+    
+    pool:
+      id: "pool1abcde12345fghij67890klmnopqrstuvwxyza1234567890abcd"
+      idHex: "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab"
+      name: "Test Pool Preview"
+      ticker: "TSTPP"
+    
+    application:
+      type: "block-producer"
+      environment: "development"
+  
+  # No cluster management for simple testnet
+  clusterManagement:
+    enabled: true
+    # Region identifier (required for multi-cluster)
+    region: "us-east-1"  # e.g., us-east-1, eu-west-1, ap-southeast-1
+  
+  # Legacy CRD for local leader election
+  legacy:
+    crd:
+      cardanoLeader:
+        enabled: true
+
+# ===========================================
+# STORAGE CONFIGURATION
+# ===========================================
+persistence:
+  enabled: true
+  size: 25Gi  # preview is smaller than mainnet
+  # storageClass: "standard"
+
+# ===========================================
+# RESOURCE CONFIGURATION (Reduced)
+# ===========================================
+resources:
+  cardanoNode:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 1000m
+      memory: 4Gi
+  
+  forgeManager:
+    limits:
+      cpu: 200m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# ===========================================
+# SERVICE CONFIGURATION
+# ===========================================
+service:
+  p2p:
+    type: ClusterIP  # No external load balancer for testnet
+    annotations: {}
+
+# ===========================================
+# MONITORING
+# ===========================================
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: false  # Disable ServiceMonitor for testnet
+
+# ===========================================
+# POD LABELS
+# ===========================================
+podLabels:
+  network: "preview"
+  pool-id: "pool1test"
+  environment: "development"
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "12798"
+
+# ===========================================
+# POD ANTI-AFFINITY (Optional for testnet)
+# ===========================================
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 50
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - cardano-node
+              - key: network
+                operator: In
+                values:
+                  - preview
+          topologyKey: kubernetes.io/hostname
+
+# ===========================================
+# DEPLOYMENT INSTRUCTIONS
+# ===========================================
+# This example demonstrates a preview testnet block producer with:
+# - Reduced resource requirements (2 CPU, 8GB RAM)
+# - Mithril snapshot restore for fast sync
+# - 2 replicas for basic HA
+# - Debug logging enabled
+# - No cluster management (single cluster)
+#
+# 1. Install CRDs (once):
+#    helm install cardano-forge-crds charts/cardano-forge-crds \
+#      --namespace cardano-system --create-namespace
+#
+# 2. Create namespace:
+#    kubectl create namespace cardano-preview
+#
+# 3. Create secrets for preview pool:
+#    kubectl create secret generic preview-forging-keys \
+#      --from-file=kes.skey=path/to/preview/kes.skey \
+#      --from-file=vrf.skey=path/to/preview/vrf.skey \
+#      --from-file=node.cert=path/to/preview/node.cert \
+#      --namespace cardano-preview
+#
+# 4. Deploy preview block producer:
+#    helm install cardano-preview charts/cardano-node \
+#      --namespace cardano-preview \
+#      --set forgeManager.secretName=preview-forging-keys \
+#      -f values/testnet-preview.yaml
+#
+# 5. Monitor initial sync (with Mithril):
+#    kubectl logs -f cardano-preview-0 -c cardano-node -n cardano-preview
+#    # Should see Mithril snapshot restore messages
+#
+# 6. Check leader election:
+#    kubectl get cardanoleaders -n cardano-preview
+#    kubectl describe cardanoleader cardano-leader-preview-pool1test -n cardano-preview
+#
+# 7. Monitor forge manager:
+#    kubectl logs -f cardano-preview-0 -c forge-manager -n cardano-preview
+#
+# 8. Check metrics:
+#    kubectl port-forward svc/cardano-preview-forge-metrics 8000:8000 -n cardano-preview
+#    curl localhost:8000/metrics | grep cardano_
+#
+# ===========================================
+# TESTING SCENARIOS
+# ===========================================
+# 1. Test leader election:
+#    kubectl delete pod cardano-preview-0 -n cardano-preview
+#    # Watch as cardano-preview-1 becomes leader
+#
+# 2. Test credential distribution:
+#    kubectl exec -it cardano-preview-0 -c forge-manager -n cardano-preview -- ls -la /ipc/
+#    # Leader should have kes.skey, vrf.skey, node.cert
+#
+# 3. Test forging:
+#    # Wait for full sync, then monitor blocks forged
+#    kubectl exec -it cardano-preview-0 -c cardano-node -n cardano-preview -- \
+#      cardano-cli query tip --testnet-magic 1
+#
+# ===========================================
+# NETWORK MAGIC REFERENCE
+# ===========================================
+# Preview: 2
+# Preprod: 1
+# Mainnet: 764824073
