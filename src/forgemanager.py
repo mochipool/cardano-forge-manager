@@ -421,18 +421,25 @@ def forfeit_leadership():
 def update_leader_status(is_leader: bool):
     """Update CardanoLeader CRD status with current leadership and forging state.
     
-    Only updates the CRD when there are actual state changes to reduce API churn.
-    Ensures the first update syncs with the live CRD to avoid stale in-memory state.
+    CRITICAL: If we hold the lease (is_leader=True), we MUST write our pod name to the CRD.
+    This ensures the CRD always reflects the current lease holder, regardless of previous state.
+    Non-leaders should not overwrite the CRD unless they need to clear stale data.
     """
-    global last_crd_leader_state, last_crd_forging_state, crd_status_initialized
-    
     # Get forging permission from cluster manager
     forging_allowed, forging_reason = cluster_manager.should_allow_forging()
     # Only forge if we're leader AND cluster allows forging
     forging_enabled = is_leader and forging_allowed
     
-    # On first run, initialize in-memory state from the live CRD to avoid false "unchanged" skips
-    if not crd_status_initialized:
+    # If we're the leader, ALWAYS update CRD with our pod name
+    # If we're not the leader, only update if we need to clear our own stale entry
+    should_update = False
+    
+    if is_leader:
+        # ALWAYS update when we hold the lease - this is the source of truth
+        should_update = True
+        logger.debug(f"Leader update: Writing {POD_NAME} to CRD (forging: {forging_enabled})")
+    else:
+        # Non-leader: Check if CRD incorrectly shows us as leader and clear it
         try:
             current_crd = custom_objects.get_namespaced_custom_object_status(
                 group=CRD_GROUP,
@@ -443,37 +450,21 @@ def update_leader_status(is_leader: bool):
             )
             live_status = current_crd.get("status", {}) if isinstance(current_crd, dict) else {}
             live_leader = live_status.get("leaderPod", "")
-            live_forging = bool(live_status.get("forgingEnabled", False))
-            last_crd_leader_state = live_leader
-            last_crd_forging_state = live_forging
-            crd_status_initialized = True
-            logger.debug(
-                f"Initialized CRD cache from live status: leader={live_leader or 'none'}, forging={live_forging}"
-            )
+            
+            if live_leader == POD_NAME:
+                # CRD incorrectly shows us as leader - we must clear it
+                should_update = True
+                logger.info(f"Non-leader cleanup: Clearing stale {POD_NAME} from CRD")
+            else:
+                # CRD doesn't show us as leader - no update needed
+                logger.debug(f"Non-leader: CRD shows {live_leader or 'none'} as leader, no update needed")
         except ApiException as e:
             if e.status == 404:
-                # CRD not found yet - force an update below
-                last_crd_leader_state = None
-                last_crd_forging_state = None
-                crd_status_initialized = True
-                logger.debug("CRD not found; will create/update status on first write")
+                logger.debug("CRD not found; non-leader skipping update")
             else:
-                logger.warning(f"Could not read live CRD status (will proceed to update): {e}")
-                # Force an update attempt
-                last_crd_leader_state = None
-                last_crd_forging_state = None
-                crd_status_initialized = True
+                logger.warning(f"Could not read CRD status as non-leader: {e}")
     
-    # Check if state has actually changed
-    current_leader_pod = POD_NAME if is_leader else ""
-    state_changed = (
-        last_crd_leader_state != current_leader_pod or 
-        last_crd_forging_state != forging_enabled
-    )
-    
-    # Skip update if no changes (reduces API calls and reconciliation churn)
-    if not state_changed:
-        logger.debug(f"CRD state unchanged - skipping update (leader: {is_leader}, forging: {forging_enabled})")
+    if not should_update:
         return
     
     status_body = {
@@ -492,9 +483,6 @@ def update_leader_status(is_leader: bool):
             name=CRD_NAME,
             body=status_body,
         )
-        # Update state tracking after successful CRD update
-        last_crd_leader_state = current_leader_pod
-        last_crd_forging_state = forging_enabled
         
         logger.info(
             f"CRD status updated: leader={POD_NAME if is_leader else 'none'}, forgingEnabled={forging_enabled} (cluster allows: {forging_allowed}, reason: {forging_reason})"
@@ -507,7 +495,6 @@ def update_leader_status(is_leader: bool):
 
     except ApiException as e:
         logger.error(f"Failed to update CRD status: {e}")
-        # Don't update state tracking on failure so we'll retry on next iteration
 
 
 def update_metrics(is_leader: bool):

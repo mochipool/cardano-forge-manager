@@ -877,13 +877,17 @@ class TestCRDManagement(unittest.TestCase):
 
     @patch("forgemanager.cluster_manager")
     def test_update_leader_status_non_leader(self, mock_cluster_manager):
-        """Test CRD status update for non-leader (should update to clear status)."""
+        """Test CRD status update for non-leader (only updates if CRD shows it as leader)."""
         # Mock cluster manager to return forging not allowed
         mock_cluster_manager.should_allow_forging.return_value = (False, "cluster_forge_disabled")
         
+        # Case 1: CRD shows this pod as leader - should update to clear
+        mock_crd = {"status": {"leaderPod": self.pod_name, "forgingEnabled": True}}
+        self.mock_custom_objects.get_namespaced_custom_object_status.return_value = mock_crd
+        
         forgemanager.update_leader_status(is_leader=False)
 
-        # Should call API to clear leadership status
+        # Should call API to clear stale leadership status
         self.mock_custom_objects.patch_namespaced_custom_object_status.assert_called_once()
         call_args = (
             self.mock_custom_objects.patch_namespaced_custom_object_status.call_args
@@ -893,6 +897,18 @@ class TestCRDManagement(unittest.TestCase):
         body = call_args[1]["body"]
         self.assertEqual(body["status"]["leaderPod"], "")
         self.assertFalse(body["status"]["forgingEnabled"])
+        
+        # Reset mock for case 2
+        self.mock_custom_objects.reset_mock()
+        
+        # Case 2: CRD shows different pod as leader - should NOT update
+        mock_crd = {"status": {"leaderPod": "other-pod", "forgingEnabled": True}}
+        self.mock_custom_objects.get_namespaced_custom_object_status.return_value = mock_crd
+        
+        forgemanager.update_leader_status(is_leader=False)
+        
+        # Should NOT call API since CRD doesn't show us as leader
+        self.mock_custom_objects.patch_namespaced_custom_object_status.assert_not_called()
 
     @patch("forgemanager.update_metrics")
     def test_forfeit_leadership_success(self, mock_update_metrics):
