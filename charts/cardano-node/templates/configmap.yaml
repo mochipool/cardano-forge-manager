@@ -50,7 +50,7 @@ data:
           "backends": [
             "{{ .Values.cardanoNode.config.traceOptions.root.backends.stdout }}"
             {{- if .Values.cardanoNode.prometheus.enabled }},
-            "Prometheus {{ .Values.cardanoNode.prometheus.host }} {{ .Values.cardanoNode.prometheus.port }}"
+            "EKGBackend"
             {{- end }}
           ],
           "severity": "{{ .Values.cardanoNode.config.traceOptions.root.severity }}"

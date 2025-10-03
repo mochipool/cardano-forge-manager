@@ -30,7 +30,7 @@ image:
   forgeManager:
     repository: ghcr.io/mochipool/cardano-forge-manager
     pullPolicy: IfNotPresent
-    tag: "v0.1.2-alpha"
+    tag: "0.1.2-alpha"
   
   mithrilSigner:
     repository: ghcr.io/input-output-hk/mithril-signer
@@ -183,6 +183,25 @@ cardanoNode:
         advertise: false
     
     useLedgerAfterSlot: 128908821
+  
+  # ===========================================
+  # GENESIS FILE URLS (Optional Overrides)
+  # ===========================================
+  # By default, genesis files are downloaded from book.world.dev.cardano.org
+  # based on the network (mainnet, preprod, preview).
+  # Override these URLs if you want to use custom sources or a local mirror.
+  genesisUrls:
+    byron: ""     # Override Byron genesis URL (empty = use default)
+    shelley: ""   # Override Shelley genesis URL (empty = use default)
+    alonzo: ""    # Override Alonzo genesis URL (empty = use default)
+    conway: ""    # Override Conway genesis URL (empty = use default)
+  
+  # Example overrides for custom network or local mirror:
+  # genesisUrls:
+  #   byron: "https://my-mirror.example.com/byron-genesis.json"
+  #   shelley: "https://my-mirror.example.com/shelley-genesis.json"
+  #   alonzo: "https://my-mirror.example.com/alonzo-genesis.json"
+  #   conway: "https://my-mirror.example.com/conway-genesis.json"
 
 # ===========================================
 # FORGE MANAGER V2.0 CONFIGURATION

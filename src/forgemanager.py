@@ -150,7 +150,7 @@ custom_objects = client.CustomObjectsApi()
 coord_api = client.CoordinationV1Api()
 
 # Initialize cluster management
-cluster_manager.initialize_cluster_manager(custom_objects, POD_NAME)
+cluster_manager.initialize_cluster_manager(custom_objects, POD_NAME, NAMESPACE)
 
 # -----------------------------
 # Global State

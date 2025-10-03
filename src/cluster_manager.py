@@ -145,9 +145,10 @@ def validate_multi_tenant_config() -> Tuple[bool, str]:
 class ClusterForgeManager:
     """Manages cluster-wide forge state using CardanoForgeCluster CRD."""
 
-    def __init__(self, custom_objects_api: client.CustomObjectsApi, pod_name: str = ""):
+    def __init__(self, custom_objects_api: client.CustomObjectsApi, pod_name: str = "", namespace: str = ""):
         self.api = custom_objects_api
         self._pod_name = pod_name or os.environ.get("POD_NAME", "")
+        self._namespace = namespace or os.environ.get("NAMESPACE", "default")
 
         # Validate multi-tenant configuration
         config_valid, config_message = validate_multi_tenant_config()
@@ -288,9 +289,10 @@ class ClusterForgeManager:
             # Calculate comprehensive status update including all required fields
             status_patch = self._build_comprehensive_status_update(pod_name, is_leader)
 
-            self.api.patch_cluster_custom_object_status(
+            self.api.patch_namespaced_custom_object_status(
                 group=CRD_GROUP,
                 version=CRD_VERSION,
+                namespace=self._namespace,
                 plural=CRD_PLURAL,
                 name=self.cluster_id,
                 body=status_patch,
@@ -338,9 +340,10 @@ class ClusterForgeManager:
         """Ensure CardanoForgeCluster CRD exists for this cluster."""
         try:
             # Try to get existing CRD
-            self._current_cluster_crd = self.api.get_cluster_custom_object(
+            self._current_cluster_crd = self.api.get_namespaced_custom_object(
                 group=CRD_GROUP,
                 version=CRD_VERSION,
+                namespace=self._namespace,
                 plural=CRD_PLURAL,
                 name=self.cluster_id,
             )
@@ -441,8 +444,12 @@ class ClusterForgeManager:
         }
 
         try:
-            self._current_cluster_crd = self.api.create_cluster_custom_object(
-                group=CRD_GROUP, version=CRD_VERSION, plural=CRD_PLURAL, body=crd_body
+            self._current_cluster_crd = self.api.create_namespaced_custom_object(
+                group=CRD_GROUP, 
+                version=CRD_VERSION, 
+                namespace=self._namespace,
+                plural=CRD_PLURAL, 
+                body=crd_body
             )
             logger.info(f"Created CardanoForgeCluster CRD: {self.cluster_id}")
 
@@ -458,9 +465,10 @@ class ClusterForgeManager:
             try:
                 w = watch.Watch()
                 for event in w.stream(
-                    self.api.list_cluster_custom_object,
+                    self.api.list_namespaced_custom_object,
                     group=CRD_GROUP,
                     version=CRD_VERSION,
+                    namespace=self._namespace,
                     plural=CRD_PLURAL,
                     timeout_seconds=30,
                 ):
@@ -609,9 +617,10 @@ class ClusterForgeManager:
                 }
             }
 
-            self.api.patch_cluster_custom_object_status(
+            self.api.patch_namespaced_custom_object_status(
                 group=CRD_GROUP,
                 version=CRD_VERSION,
+                namespace=self._namespace,
                 plural=CRD_PLURAL,
                 name=self.cluster_id,
                 body=status_patch,
@@ -774,9 +783,10 @@ class ClusterForgeManager:
             # Build and apply comprehensive status update
             status_patch = self._build_comprehensive_status_update(current_leader, is_leader)
 
-            self.api.patch_cluster_custom_object_status(
+            self.api.patch_namespaced_custom_object_status(
                 group=CRD_GROUP,
                 version=CRD_VERSION,
+                namespace=self._namespace,
                 plural=CRD_PLURAL,
                 name=self.cluster_id,
                 body=status_patch,
@@ -799,13 +809,13 @@ cluster_manager: Optional[ClusterForgeManager] = None
 
 
 def initialize_cluster_manager(
-    custom_objects_api: client.CustomObjectsApi, pod_name: str = "",
+    custom_objects_api: client.CustomObjectsApi, pod_name: str = "", namespace: str = ""
 ) -> Optional[ClusterForgeManager]:
     """Initialize the global cluster manager instance."""
     global cluster_manager
 
     if cluster_manager is None:
-        cluster_manager = ClusterForgeManager(custom_objects_api, pod_name)
+        cluster_manager = ClusterForgeManager(custom_objects_api, pod_name, namespace)
         cluster_manager.start()
 
     return cluster_manager

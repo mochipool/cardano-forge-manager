@@ -82,8 +82,8 @@ forgeManager:
     enabled: true
     
     pool:
-      id: "pool1testpreviewdevelopment11111111111111111111111"  # Replace with your preview pool ID
-      idHex: ""
+      id: "pool1abcde12345fghij67890klmnopqrstuvwxyza1234567890abcd"
+      idHex: "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab"
       name: "Test Pool Preview"
       ticker: "TSTPP"
     
@@ -93,7 +93,9 @@ forgeManager:
   
   # No cluster management for simple testnet
   clusterManagement:
-    enabled: false
+    enabled: true
+    # Region identifier (required for multi-cluster)
+    region: "us-east-1"  # e.g., us-east-1, eu-west-1, ap-southeast-1
   
   # Legacy CRD for local leader election
   legacy:

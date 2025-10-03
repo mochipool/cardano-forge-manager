@@ -148,8 +148,8 @@ class TestClusterForgeManager(unittest.TestCase):
     def test_crd_creation(self):
         """Test CardanoForgeCluster CRD creation."""
         # Mock API calls
-        self.mock_api.get_cluster_custom_object.side_effect = ApiException(status=404)
-        self.mock_api.create_cluster_custom_object.return_value = {
+        self.mock_api.get_namespaced_custom_object.side_effect = ApiException(status=404)
+        self.mock_api.create_namespaced_custom_object.return_value = {
             "metadata": {"name": "test-cluster"}
         }
 
@@ -157,8 +157,8 @@ class TestClusterForgeManager(unittest.TestCase):
         self.cluster_mgr._ensure_cluster_crd()
 
         # Verify CRD creation was called
-        self.mock_api.create_cluster_custom_object.assert_called_once()
-        call_args = self.mock_api.create_cluster_custom_object.call_args
+        self.mock_api.create_namespaced_custom_object.assert_called_once()
+        call_args = self.mock_api.create_namespaced_custom_object.call_args
 
         body = call_args[1]["body"]
         self.assertEqual(body["kind"], "CardanoForgeCluster")
@@ -173,8 +173,8 @@ class TestClusterForgeManager(unittest.TestCase):
         # Test successful update
         self.cluster_mgr.update_leader_status("test-pod-0", True)
 
-        self.mock_api.patch_cluster_custom_object_status.assert_called_once()
-        call_args = self.mock_api.patch_cluster_custom_object_status.call_args
+        self.mock_api.patch_namespaced_custom_object_status.assert_called_once()
+        call_args = self.mock_api.patch_namespaced_custom_object_status.call_args
 
         body = call_args[1]["body"]
         self.assertEqual(body["status"]["activeLeader"], "test-pod-0")
@@ -277,7 +277,7 @@ class TestClusterManagerIntegration(unittest.TestCase):
             result = cluster_manager.initialize_cluster_manager(self.mock_api)
 
             self.assertIsNotNone(result)
-            mock_class.assert_called_once_with(self.mock_api)
+            mock_class.assert_called_once_with(self.mock_api, '', '')
             mock_instance.start.assert_called_once()
 
         # Cleanup
@@ -526,10 +526,10 @@ class TestMultiTenantSupport(unittest.TestCase):
                 mgr = cluster_manager.ClusterForgeManager(self.mock_api)
 
                 # Mock CRD creation
-                self.mock_api.get_cluster_custom_object.side_effect = ApiException(
+                self.mock_api.get_namespaced_custom_object.side_effect = ApiException(
                     status=404
                 )
-                self.mock_api.create_cluster_custom_object.return_value = {
+                self.mock_api.create_namespaced_custom_object.return_value = {
                     "metadata": {"name": mgr.cluster_id}
                 }
 
@@ -537,8 +537,8 @@ class TestMultiTenantSupport(unittest.TestCase):
                 mgr._ensure_cluster_crd()
 
                 # Verify CRD was created with correct structure
-                self.mock_api.create_cluster_custom_object.assert_called_once()
-                call_args = self.mock_api.create_cluster_custom_object.call_args
+                self.mock_api.create_namespaced_custom_object.assert_called_once()
+                call_args = self.mock_api.create_namespaced_custom_object.call_args
                 body = call_args[1]["body"]
 
                 # Verify multi-tenant metadata

@@ -53,6 +53,9 @@ spec:
         - name: init-cardano-setup
           image: "busybox:1.37.0"
           imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: {{ include "cardano-node.fullname" . }}-genesis
           command:
             - sh
             - -c
@@ -74,15 +77,43 @@ spec:
               echo "$(date) [INIT] Copying configuration files..."
               cp -Lr /config-src/* /config/ || true
               
-              # Download Byron genesis
-              BYRON_URL="{{ include "cardano-node.byronGenesisUrl" . }}"
+              # Download genesis files
+              echo "$(date) [INIT] Downloading genesis files..."
+              
               if [ -n "$BYRON_URL" ]; then
                 echo "$(date) [INIT] Downloading Byron genesis from $BYRON_URL"
                 wget -q -O /config/genesis/byron-genesis.json "$BYRON_URL" || {
-                  echo "$(date) [INIT] WARNING: Failed to download Byron genesis"
+                  echo "$(date) [INIT] ERROR: Failed to download Byron genesis"
+                  exit 1
                 }
               fi
               
+              if [ -n "$SHELLEY_URL" ]; then
+                echo "$(date) [INIT] Downloading Shelley genesis from $SHELLEY_URL"
+                wget -q -O /config/genesis/shelley-genesis.json "$SHELLEY_URL" || {
+                  echo "$(date) [INIT] ERROR: Failed to download Shelley genesis"
+                  exit 1
+                }
+              fi
+              
+              if [ -n "$ALONZO_URL" ]; then
+                echo "$(date) [INIT] Downloading Alonzo genesis from $ALONZO_URL"
+                wget -q -O /config/genesis/alonzo-genesis.json "$ALONZO_URL" || {
+                  echo "$(date) [INIT] ERROR: Failed to download Alonzo genesis"
+                  exit 1
+                }
+              fi
+              
+              if [ -n "$CONWAY_URL" ]; then
+                echo "$(date) [INIT] Downloading Conway genesis from $CONWAY_URL"
+                wget -q -O /config/genesis/conway-genesis.json "$CONWAY_URL" || {
+                  echo "$(date) [INIT] ERROR: Failed to download Conway genesis"
+                  exit 1
+                }
+              fi
+              
+              echo "$(date) [INIT] Genesis files downloaded successfully"
+              ls -la /config/genesis/
               echo "$(date) [INIT] Setup complete"
           volumeMounts:
             - name: cardano-data
@@ -231,25 +262,53 @@ spec:
         - name: cardano-node
           image: "{{ .Values.image.cardanoNode.repository }}:{{ .Values.image.cardanoNode.tag }}"
           imagePullPolicy: {{ .Values.image.cardanoNode.pullPolicy }}
-          command:
-            - "cardano-node"
+          args:
             - "run"
-            - "--config"
-            - "{{ .Values.cardanoNode.configDir }}/config.json"
-            - "--topology"
-            - "{{ .Values.cardanoNode.configDir }}/topology.json"
-            - "--database-path"
-            - "{{ .Values.cardanoNode.dataDir }}/db"
-            - "--socket-path"
-            - "{{ .Values.cardanoNode.socketPath }}"
-            - "--host-addr"
-            - "0.0.0.0"
-            - "--port"
-            - "{{ .Values.cardanoNode.port }}"
-            {{- if .Values.cardanoNode.startAsNonProducing }}
-            - "--start-as-non-producing-node"
-            {{- end }}
           env:
+            # Blinklabs-io cardano-node specific environment variables
+            - name: CARDANO_BIND_ADDR
+              value: "0.0.0.0"
+            - name: CARDANO_PORT
+              value: {{ .Values.cardanoNode.port | quote }}
+            - name: CARDANO_SOCKET_PATH
+              value: {{ .Values.cardanoNode.socketPath | quote }}
+            - name: CARDANO_DATABASE_PATH
+              value: {{ .Values.cardanoNode.dataDir }}/db
+            - name: CARDANO_CONFIG_BASE
+              value: {{ .Values.cardanoNode.configDir }}
+            - name: CARDANO_CONFIG
+              value: {{ .Values.cardanoNode.configDir }}/config.json
+            - name: CARDANO_NETWORK
+              value: {{ .Values.cardanoNode.network | quote }}
+            - name: CARDANO_TOPOLOGY
+              value: {{ .Values.cardanoNode.configDir }}/topology.json
+            {{- if .Values.cardanoNode.blockProducer }}
+            - name: CARDANO_BLOCK_PRODUCER
+              value: "true"
+            - name: CARDANO_SHELLEY_KES_KEY
+              value: "/opt/cardano/secrets/kes.skey"
+            - name: CARDANO_SHELLEY_VRF_KEY
+              value: "/opt/cardano/secrets/vrf.skey"
+            - name: CARDANO_SHELLEY_OPERATIONAL_CERTIFICATE
+              value: "/opt/cardano/secrets/node.cert"
+            {{- if .Values.cardanoNode.startAsNonProducing }}
+            - name: START_AS_NON_PRODUCING
+              value: {{ .Values.cardanoNode.startAsNonProducing | quote }}
+            {{- end }}
+            {{- end }}
+            # Mithril snapshot bootstrap configuration
+            {{- if .Values.cardanoNode.mithril.enabled }}
+            - name: RESTORE_SNAPSHOT
+              value: {{ .Values.cardanoNode.mithril.restoreSnapshot | quote }}
+            {{- if .Values.cardanoNode.mithril.aggregatorEndpoint }}
+            - name: AGGREGATOR_ENDPOINT
+              value: {{ .Values.cardanoNode.mithril.aggregatorEndpoint | quote }}
+            - name: GENESIS_VERIFICATION_KEY
+              value: {{ .Values.cardanoNode.mithril.genesisVerificationKey | quote }}
+            - name: ANCILLARY_VERIFICATION_KEY
+              value: {{ .Values.cardanoNode.mithril.ancillaryVerificationKey | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraEnvVars }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
