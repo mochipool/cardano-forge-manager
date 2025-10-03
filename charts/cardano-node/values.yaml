@@ -517,22 +517,108 @@ monitoring:
   
   serviceMonitor:
     enabled: false  # Enable if you have Prometheus Operator
+    namespace: ""  # Defaults to release namespace
     interval: 30s
     scrapeTimeout: 10s
     labels: {}
     annotations: {}
+    selector: {}  # Additional label selectors
+    namespaceSelector: {}  # Namespace selector for cross-namespace monitoring
+    jobLabel: ""
+    targetLabels: []
+    
+    # Per-endpoint configuration
+    cardanoNode:
+      path: "/metrics"
+      interval: 30s
+      scrapeTimeout: 10s
+      relabelings: []
+      metricRelabelings: []
+    
+    forgeManager:
+      path: "/metrics"
+      interval: 30s
+      scrapeTimeout: 10s
+      relabelings: []
+      metricRelabelings: []
+
+# ===========================================
+# POD DISRUPTION BUDGET
+# ===========================================
+podDisruptionBudget:
+  enabled: false  # Enable for HA deployments
+  minAvailable: 1  # Minimum number of pods that must be available
+  # maxUnavailable: 1  # Alternative: maximum number of pods that can be unavailable
+  annotations: {}
+  # unhealthyPodEvictionPolicy: IfHealthyBudget  # K8s 1.27+
+
+# ===========================================
+# HORIZONTAL POD AUTOSCALER
+# ===========================================
+autoscaling:
+  enabled: false  # Enable only for relay nodes, NOT for block producers
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+  annotations: {}
+  customMetrics: []
+    # - type: Pods
+    #   pods:
+    #     metric:
+    #       name: custom_metric
+    #     target:
+    #       type: AverageValue
+    #       averageValue: "100"
+  behavior: {}
+    # scaleDown:
+    #   stabilizationWindowSeconds: 300
+    #   policies:
+    #   - type: Percent
+    #     value: 50
+    #     periodSeconds: 60
 
 # ===========================================
 # NETWORK POLICY
 # ===========================================
 networkPolicy:
   enabled: false
-  policyTypes:
-    - Ingress
-    - Egress
+  annotations: {}
   
-  ingress: []
-  egress: []
+  # Ingress rules
+  ingress:
+    # Allow P2P from anywhere (set CIDR to restrict)
+    p2pFromCIDR: ""  # e.g., "0.0.0.0/0" for public access
+    
+    # Allow metrics from specific namespaces
+    metricsFromNamespaces: []
+      # - monitoring
+    
+    # Submit API access control
+    submitApiFrom: []
+      # - namespaceSelector:
+      #     matchLabels:
+      #       name: apps
+    
+    # Custom ingress rules
+    customRules: []
+  
+  # Egress rules
+  egress:
+    # Allow P2P to anywhere (set CIDR to restrict)
+    p2pToCIDR: ""  # e.g., "0.0.0.0/0"
+    
+    # Allow HTTPS to anywhere (for genesis files, Mithril, etc.)
+    httpsToCIDR: ""  # e.g., "0.0.0.0/0"
+    
+    # Health check endpoint access
+    healthCheckTo: []
+      # - podSelector:
+      #     matchLabels:
+      #       app: health-service
+    
+    # Custom egress rules
+    customRules: []
 
 # ===========================================
 # SECRETS CONFIGURATION
@@ -551,8 +637,15 @@ secrets:
 # ===========================================
 # CARDANO-FORGE-CRDS SUBCHART
 # ===========================================
+# IMPORTANT: CRDs should be installed separately ONCE per cluster
+# Install CRDs first:
+#   helm install cardano-forge-crds charts/cardano-forge-crds \
+#     --namespace cardano-system --create-namespace
+#
+# Then disable this subchart to avoid ownership conflicts when deploying
+# multiple pools or releases to the same cluster.
 cardano-forge-crds:
-  enabled: true  # Install CRDs as dependency
+  enabled: false  # Disable by default - install CRDs separately!
   
   crds:
     create: true
@@ -592,9 +685,8 @@ podAnnotations: {}
 # Pod labels
 podLabels: {}
 
-# Update strategy
+# Update strategy (StatefulSet specific)
 updateStrategy:
   type: RollingUpdate
   rollingUpdate:
-    maxUnavailable: 0
-    maxSurge: 1
+    partition: 0  # Update all pods (0 means all, >0 means preserve that many)

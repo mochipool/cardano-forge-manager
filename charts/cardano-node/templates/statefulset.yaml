@@ -64,14 +64,15 @@ spec:
               mkdir -p {{ .Values.cardanoNode.dataDir }}/db
               mkdir -p /ipc
               mkdir -p /opt/cardano/secrets
+              mkdir -p /config/genesis
               
-              # Set proper permissions
-              chmod 755 /ipc
-              chmod 700 /opt/cardano/secrets
+              # Note: emptyDir volumes are already writable, no need to chmod
+              # Set permissions only on persistent volume directories
+              chmod 755 {{ .Values.cardanoNode.dataDir }}/db || true
               
               # Copy config files from ConfigMap
               echo "$(date) [INIT] Copying configuration files..."
-              cp -Lr /config-src/* /config/
+              cp -Lr /config-src/* /config/ || true
               
               # Download Byron genesis
               BYRON_URL="{{ include "cardano-node.byronGenesisUrl" . }}"
@@ -280,11 +281,11 @@ spec:
             {{- end }}
           {{- if .Values.healthChecks.cardanoNode.livenessProbe.enabled }}
           livenessProbe:
-            {{- toYaml .Values.healthChecks.cardanoNode.livenessProbe | nindent 12 }}
+            {{- omit .Values.healthChecks.cardanoNode.livenessProbe "enabled" | toYaml | nindent 12 }}
           {{- end }}
           {{- if .Values.healthChecks.cardanoNode.readinessProbe.enabled }}
           readinessProbe:
-            {{- toYaml .Values.healthChecks.cardanoNode.readinessProbe | nindent 12 }}
+            {{- omit .Values.healthChecks.cardanoNode.readinessProbe "enabled" | toYaml | nindent 12 }}
           {{- end }}
           resources:
             {{- toYaml .Values.resources.cardanoNode | nindent 12 }}

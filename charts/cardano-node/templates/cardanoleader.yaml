@@ -17,14 +17,6 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-spec:
-  description: "CardanoLeader resource for {{ include "cardano-node.fullname" . }}"
-  {{- if eq (include "cardano-node.multiTenantEnabled" .) "true" }}
-  network: {{ .Values.cardanoNode.network | quote }}
-  poolId: {{ .Values.forgeManager.multiTenant.pool.id | quote }}
-  {{- if .Values.forgeManager.multiTenant.pool.ticker }}
-  poolTicker: {{ .Values.forgeManager.multiTenant.pool.ticker | quote }}
-  {{- end }}
-  {{- end }}
+spec: {}
 status: {}
 {{- end }}

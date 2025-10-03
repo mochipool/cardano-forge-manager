@@ -146,5 +146,5 @@ data:
       "useLedgerAfterSlot": {{ int .Values.cardanoNode.topology.useLedgerAfterSlot }}
     }
   
-  genesis/byron-genesis.url: |
+  byron-genesis-url: |
     {{ include "cardano-node.byronGenesisUrl" . }}
