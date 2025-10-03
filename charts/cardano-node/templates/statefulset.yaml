@@ -342,7 +342,7 @@ spec:
           livenessProbe:
             {{- omit .Values.healthChecks.cardanoNode.livenessProbe "enabled" | toYaml | nindent 12 }}
           {{- end }}
-          {{- if .Values.healthChecks.cardanoNode.readinessProbe.enabled }}
+          {{- if and .Values.healthChecks.cardanoNode.readinessProbe.enabled .Values.cardanoNode.prometheus.enabled }}
           readinessProbe:
             {{- omit .Values.healthChecks.cardanoNode.readinessProbe "enabled" | toYaml | nindent 12 }}
           {{- end }}

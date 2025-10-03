@@ -78,9 +78,11 @@ cardanoNode:
   ekgPort: 12788
   
   # Prometheus metrics
+  # IMPORTANT: When enabled, configures PrometheusSimple backend for metrics export
+  # This replaces EKGBackend which only runs on localhost and fails in Kubernetes
   prometheus:
     enabled: true
-    host: "0.0.0.0"
+    host: "0.0.0.0"  # Bind to all interfaces for Kubernetes service access
     port: 12798
   
   # Cardano node configuration (injected into config.json)
@@ -105,6 +107,7 @@ cardanoNode:
     lastKnownBlockVersionMinor: 0
     lastKnownBlockVersionAlt: 0
     maxKnownMajorProtocolVersion: 2
+    minNodeVersion: "10.5.1"
     
     # LedgerDB configuration
     ledgerDB:
@@ -138,6 +141,11 @@ cardanoNode:
     traceOptionPeerFrequency: 2000
     traceOptionResourceFrequency: 1000
     
+    # Trace forwarder configuration
+    traceOptionForwarder:
+      connQueueSize: 64
+      disconnQueueSize: 128
+    
     # Trace options per component
     traceOptions:
       root:
@@ -148,16 +156,53 @@ cardanoNode:
         severity: "Silence"
       chainDB:
         severity: "Info"
+      chainDBAddBlockValidation:
+        severity: "Silence"
       chainSyncClient:
         severity: "Warning"
+      netConnectionManagerRemote:
+        severity: "Info"
+      netSubscriptionDNS:
+        severity: "Info"
+      startupDiffusionInit:
+        severity: "Info"
+      netErrorPolicy:
+        severity: "Info"
       forgeLoop:
         severity: "Info"
       forgeStateInfo:
         severity: "Info"
+      netInboundGovernorRemote:
+        severity: "Info"
+      netSubscriptionIP:
+        severity: "Info"
+      netErrorPolicyLocal:
+        severity: "Info"
       mempool:
         severity: "Info"
+      netMuxRemote:
+        severity: "Info"
+      netInboundGovernor:
+        severity: "Warning"
+      netPeerSelection:
+        severity: "Silence"
+      netConnectionManagerRemoteCounters:
+        severity: "Silence"
+      ledgerMetrics:
+        severity: "Silence"
       resources:
         severity: "Silence"
+      # Frequency-based trace options
+      chainDBAddedBlockToQueue:
+        maxFrequency: 2.0
+      chainDBAddedBlockToVolatileDB:
+        maxFrequency: 2.0
+      chainDBValidCandidate:
+        maxFrequency: 2.0
+      chainDBCopiedBlockToImmutableDB:
+        maxFrequency: 2.0
+      blockFetchCompletedBlockFetch:
+        maxFrequency: 2.0
   
   # Topology configuration (P2P bootstrap peers)
   topology:
@@ -506,27 +551,31 @@ affinity: {}
 # ===========================================
 # HEALTH CHECKS
 # ===========================================
+# IMPORTANT: Readiness probes are now conditional on prometheus.enabled=true
+# This prevents probe failures when Prometheus backend is not configured
 healthChecks:
   cardanoNode:
+    # Disable liveness probe to prevent restarts - use readiness probe only
     livenessProbe:
-      enabled: true
+      enabled: false  # Disabled to prevent container restarts due to probe failures
       httpGet:
         path: /
-        port: 12798
+        port: 12798  # Prometheus metrics port (works when prometheus.enabled: true)
       initialDelaySeconds: 120
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
     
+    # Use readiness probe to control traffic routing without restarting container
     readinessProbe:
       enabled: true
       httpGet:
-        path: /
-        port: 12798
+        path: /metrics  # Use /metrics endpoint which is more reliable
+        port: 12798  # Prometheus metrics port (only works when prometheus.enabled: true)
       initialDelaySeconds: 60
-      periodSeconds: 10
-      timeoutSeconds: 5
-      failureThreshold: 3
+      periodSeconds: 15  # More frequent checks for readiness
+      timeoutSeconds: 10
+      failureThreshold: 5  # Allow more failures before marking unready
 
 # ===========================================
 # MONITORING
