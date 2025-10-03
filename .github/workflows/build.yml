@@ -8,8 +8,6 @@ on:
       - 'src/**'
       - 'Dockerfile'
       - 'requirements.txt'
-      - 'dummy.yaml'
-      - 'makefile'
       - '.github/workflows/**'
   pull_request:
     branches: [ main ]
@@ -17,8 +15,6 @@ on:
       - 'src/**'
       - 'Dockerfile'
       - 'requirements.txt'
-      - 'dummy.yaml'
-      - 'makefile'
       - '.github/workflows/**'
   workflow_dispatch:
     inputs:
@@ -117,7 +113,7 @@ jobs:
             echo "$CHANGED_FILES"
             
             # Check if any functional files changed
-            FUNCTIONAL_CHANGES=$(echo "$CHANGED_FILES" | grep -E '^(src/|Dockerfile|requirements\.txt|makefile|dummy\.yaml|\.github/workflows/)' || true)
+            FUNCTIONAL_CHANGES=$(echo "$CHANGED_FILES" | grep -E '^(src/|Dockerfile|requirements\.txt|\.github/workflows/)' || true)
             
             if [ -z "$FUNCTIONAL_CHANGES" ]; then
               echo "should-build=false" >> $GITHUB_OUTPUT
@@ -359,37 +355,6 @@ jobs:
           body_path: CHANGELOG.md
           generate_release_notes: true
           files: |
-            dummy.yaml
             requirements.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Update deployment files
-  update-deployment:
-    name: Update Deployment Files
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main' && needs.build.outputs.should-build == 'true'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update image tags in deployment files
-        run: |
-          # Update dummy.yaml with new image tag
-          sed -i "s|image:.*cardano-forge-manager.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" dummy.yaml
-
-      - name: Commit updated deployment files
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          if git diff --quiet; then
-            echo "No changes to commit"
-          else
-            git add dummy.yaml
-            git commit -m "Update container image to ${{ github.sha }}"
-            git push
-          fi
