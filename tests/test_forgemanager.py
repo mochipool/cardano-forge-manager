@@ -438,9 +438,13 @@ class TestCredentialManagement(unittest.TestCase):
 
         self.assertFalse(result)
 
+    @patch("forgemanager.cluster_manager")
     @patch("forgemanager.send_sighup_to_cardano_node")
-    def test_ensure_secrets_leader_provision(self, mock_sighup):
+    def test_ensure_secrets_leader_provision(self, mock_sighup, mock_cluster_manager):
         """Test credential provisioning for leader."""
+        # Mock cluster manager to allow forging
+        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
+        
         # Patch the module-level constants since they're read at import time
         with patch.object(
             forgemanager, "SOURCE_KES_KEY", self.source_kes
@@ -465,9 +469,13 @@ class TestCredentialManagement(unittest.TestCase):
         # Should send SIGHUP
         mock_sighup.assert_called_once_with("enable_forging")
 
+    @patch("forgemanager.cluster_manager")
     @patch("forgemanager.send_sighup_to_cardano_node")
-    def test_ensure_secrets_non_leader_remove(self, mock_sighup):
+    def test_ensure_secrets_non_leader_remove(self, mock_sighup, mock_cluster_manager):
         """Test credential removal for non-leader."""
+        # Mock cluster manager to disallow forging
+        mock_cluster_manager.should_allow_forging.return_value = (False, "not_leader")
+        
         # Patch the module-level constants since they're read at import time
         with patch.object(
             forgemanager, "SOURCE_KES_KEY", self.source_kes
@@ -497,8 +505,12 @@ class TestCredentialManagement(unittest.TestCase):
         # Should send SIGHUP
         mock_sighup.assert_called_once_with("disable_forging")
 
-    def test_ensure_secrets_no_change_needed(self):
+    @patch("forgemanager.cluster_manager")
+    def test_ensure_secrets_no_change_needed(self, mock_cluster_manager):
         """Test credential management when no changes are needed."""
+        # Mock cluster manager to allow forging
+        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
+        
         # Copy credentials first
         for src, target in [
             (self.source_kes, self.target_kes),
@@ -649,28 +661,20 @@ class TestLeadershipElection(unittest.TestCase):
 
     @patch("forgemanager.cluster_manager")
     def test_try_acquire_leader_blocked_by_cluster(self, mock_cluster_manager):
-        """Test leadership blocked by cluster management."""
-        # Mock cluster manager blocks leadership
-        mock_cluster_manager.should_allow_local_leadership.return_value = (
-            False,
-            "cluster_disabled",
-        )
+        """Test leadership acquisition with new design (always allowed)."""
+        # In the new design, leadership is never blocked by cluster management
+        # Mock a vacant lease to simulate normal leadership acquisition
+        vacant_lease = self.create_mock_lease(holder="")
+        self.mock_coord_api.read_namespaced_lease.return_value = vacant_lease
+        
+        # Set initial state as not leader
+        forgemanager.current_leadership_state = False
 
-        # Set initial state as leader
-        forgemanager.current_leadership_state = True
+        result = forgemanager.try_acquire_leader()
 
-        with patch("forgemanager.ensure_secrets") as mock_ensure, patch(
-            "forgemanager.update_metrics"
-        ) as mock_metrics:
-
-            result = forgemanager.try_acquire_leader()
-
-        self.assertFalse(result)
-        self.assertFalse(forgemanager.current_leadership_state)
-
-        # Should clean up when blocked
-        mock_ensure.assert_called_once_with(is_leader=False)
-        mock_metrics.assert_called_once_with(is_leader=False)
+        # Leadership should be acquired successfully
+        self.assertTrue(result)
+        self.assertTrue(forgemanager.current_leadership_state)
 
     @patch("forgemanager.cluster_manager")
     def test_try_acquire_leader_lease_conflict(self, mock_cluster_manager):
@@ -813,6 +817,9 @@ class TestCRDManagement(unittest.TestCase):
     @patch("forgemanager.cluster_manager")
     def test_update_leader_status_success(self, mock_cluster_manager):
         """Test successful CRD status update."""
+        # Mock cluster manager to allow forging
+        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
+        
         forgemanager.update_leader_status(is_leader=True)
 
         self.mock_custom_objects.patch_namespaced_custom_object_status.assert_called_once()
@@ -830,6 +837,9 @@ class TestCRDManagement(unittest.TestCase):
     def test_update_leader_status_api_exception(self, mock_cluster_manager):
         """Test CRD status update with API exception."""
         from kubernetes.client.rest import ApiException
+        
+        # Mock cluster manager to allow forging
+        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
 
         self.mock_custom_objects.patch_namespaced_custom_object_status.side_effect = (
             ApiException(status=500, reason="Internal Server Error")
@@ -838,12 +848,24 @@ class TestCRDManagement(unittest.TestCase):
         # Should not raise exception
         forgemanager.update_leader_status(is_leader=True)
 
-    def test_update_leader_status_non_leader(self):
-        """Test CRD status update for non-leader (should not update)."""
+    @patch("forgemanager.cluster_manager")
+    def test_update_leader_status_non_leader(self, mock_cluster_manager):
+        """Test CRD status update for non-leader (should update to clear status)."""
+        # Mock cluster manager to return forging not allowed
+        mock_cluster_manager.should_allow_forging.return_value = (False, "cluster_forge_disabled")
+        
         forgemanager.update_leader_status(is_leader=False)
 
-        # Should not call API for non-leaders
-        self.mock_custom_objects.patch_namespaced_custom_object_status.assert_not_called()
+        # Should call API to clear leadership status
+        self.mock_custom_objects.patch_namespaced_custom_object_status.assert_called_once()
+        call_args = (
+            self.mock_custom_objects.patch_namespaced_custom_object_status.call_args
+        )
+        
+        # Verify non-leader status is set
+        body = call_args[1]["body"]
+        self.assertEqual(body["status"]["leaderPod"], "")
+        self.assertFalse(body["status"]["forgingEnabled"])
 
     @patch("forgemanager.update_metrics")
     def test_forfeit_leadership_success(self, mock_update_metrics):
@@ -1026,6 +1048,9 @@ class TestMetricsAndMonitoring(unittest.TestCase):
     @patch("forgemanager.cluster_manager")
     def test_update_metrics_leader(self, mock_cluster_manager):
         """Test metrics update for leader."""
+        # Mock cluster manager to allow forging
+        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
+        
         # Mock cluster manager metrics
         mock_cluster_manager.get_cluster_metrics.return_value = {
             "enabled": True,
@@ -1046,6 +1071,9 @@ class TestMetricsAndMonitoring(unittest.TestCase):
     @patch("forgemanager.cluster_manager")
     def test_update_metrics_non_leader(self, mock_cluster_manager):
         """Test metrics update for non-leader."""
+        # Mock cluster manager to disallow forging
+        mock_cluster_manager.should_allow_forging.return_value = (False, "not_leader")
+        
         mock_cluster_manager.get_cluster_metrics.return_value = {"enabled": False}
 
         forgemanager.update_metrics(is_leader=False)
@@ -1111,6 +1139,9 @@ class TestMultiTenantSupport(unittest.TestCase):
             forgemanager.APPLICATION_TYPE = "block-producer"
 
             with patch("forgemanager.cluster_manager") as mock_cluster:
+                # Mock cluster manager to allow forging
+                mock_cluster.should_allow_forging.return_value = (True, "cluster_forge_enabled")
+                
                 mock_cluster.get_cluster_metrics.return_value = {"enabled": False}
 
                 # This would test the actual label values in the metrics
