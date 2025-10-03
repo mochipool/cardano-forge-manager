@@ -9,15 +9,17 @@ for Cardano block producer nodes running in Kubernetes.
 
 import logging
 import os
+import psutil
+import random
 import shutil
 import signal
 import stat
+import sys
+import tempfile
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-
-# Third-party imports
-import psutil
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from prometheus_client import Counter, Gauge, Info, start_http_server
@@ -156,10 +158,14 @@ cluster_manager.initialize_cluster_manager(custom_objects, POD_NAME, NAMESPACE)
 # Global State
 # -----------------------------
 current_leadership_state = False
+previous_leadership_state = None  # Track previous state to prevent unnecessary updates
 last_socket_check = 0
 cardano_node_pid: Optional[int] = None
 node_startup_phase = True  # Track if node is in startup phase
 startup_credentials_provisioned = False  # Track if startup credentials are provided
+# CRD state tracking to reduce unnecessary updates
+last_crd_leader_state = None
+last_crd_forging_state = None
 
 # -----------------------------
 # Process Management Functions
@@ -411,14 +417,28 @@ def forfeit_leadership():
 
 
 def update_leader_status(is_leader: bool):
-    """Update CardanoLeader CRD status with current leadership and forging state."""
-    # Always update CRD status to reflect current leadership state
-    # but distinguish between leadership and forging permission
+    """Update CardanoLeader CRD status with current leadership and forging state.
+    
+    Only updates the CRD when there are actual state changes to reduce API churn.
+    """
+    global last_crd_leader_state, last_crd_forging_state
     
     # Get forging permission from cluster manager
     forging_allowed, forging_reason = cluster_manager.should_allow_forging()
     # Only forge if we're leader AND cluster allows forging
     forging_enabled = is_leader and forging_allowed
+    
+    # Check if state has actually changed
+    current_leader_pod = POD_NAME if is_leader else ""
+    state_changed = (
+        last_crd_leader_state != current_leader_pod or 
+        last_crd_forging_state != forging_enabled
+    )
+    
+    # Skip update if no changes (reduces API calls and reconciliation churn)
+    if not state_changed:
+        logger.debug(f"CRD state unchanged - skipping update (leader: {is_leader}, forging: {forging_enabled})")
+        return
     
     status_body = {
         "status": {
@@ -436,6 +456,10 @@ def update_leader_status(is_leader: bool):
             name=CRD_NAME,
             body=status_body,
         )
+        # Update state tracking after successful CRD update
+        last_crd_leader_state = current_leader_pod
+        last_crd_forging_state = forging_enabled
+        
         logger.info(
             f"CRD status updated: leader={POD_NAME if is_leader else 'none'}, forgingEnabled={forging_enabled} (cluster allows: {forging_allowed}, reason: {forging_reason})"
         )
@@ -447,6 +471,7 @@ def update_leader_status(is_leader: bool):
 
     except ApiException as e:
         logger.error(f"Failed to update CRD status: {e}")
+        # Don't update state tracking on failure so we'll retry on next iteration
 
 
 def update_metrics(is_leader: bool):
@@ -657,6 +682,40 @@ def startup_cleanup():
 
 
 # -----------------------------
+# Utility Functions for Lease Stability
+# -----------------------------
+
+def calculate_jittered_sleep(base_interval: int, max_jitter_percent: float = 0.2) -> float:
+    """Calculate sleep interval with jitter to prevent synchronized wake-ups.
+    
+    Args:
+        base_interval: Base sleep interval in seconds
+        max_jitter_percent: Maximum jitter as percentage of base interval (0.0-1.0)
+    
+    Returns:
+        Sleep interval with random jitter applied
+    """
+    jitter_range = base_interval * max_jitter_percent
+    jitter = random.uniform(-jitter_range, jitter_range)
+    return max(1.0, base_interval + jitter)  # Ensure minimum 1 second
+
+def calculate_exponential_backoff(attempt: int, base_delay: float = 0.5, max_delay: float = 30.0) -> float:
+    """Calculate exponential backoff delay for retry attempts.
+    
+    Args:
+        attempt: Retry attempt number (0-based)
+        base_delay: Base delay in seconds
+        max_delay: Maximum delay in seconds
+    
+    Returns:
+        Backoff delay with jitter
+    """
+    delay = min(base_delay * (2 ** attempt), max_delay)
+    # Add jitter to prevent thundering herd
+    jitter = random.uniform(0.1, 0.3) * delay
+    return delay + jitter
+
+# -----------------------------
 # Lease Functions
 # -----------------------------
 
@@ -680,8 +739,16 @@ def parse_k8s_time(time_val) -> datetime:
                 tzinfo=timezone.utc
             )
         except ValueError:
-            logger.warning(f"Could not parse timestamp: {time_str}")
-            return datetime.now(timezone.utc)
+            try:
+                # Handle +00:00 timezone format (ISO 8601 with timezone offset)
+                return datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S.%f%z")
+            except ValueError:
+                try:
+                    # Handle +00:00 timezone format without microseconds
+                    return datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S%z")
+                except ValueError:
+                    logger.warning(f"Could not parse timestamp: {time_str}")
+                    return datetime.now(timezone.utc)
 
 
 def get_lease():
@@ -725,79 +792,164 @@ def create_lease():
 
 
 def patch_lease(lease):
-    """Update lease with current timestamp."""
+    """Update lease with current timestamp using optimistic concurrency control."""
     lease.spec.renew_time = datetime.now(timezone.utc).isoformat()
-    return coord_api.patch_namespaced_lease(
-        name=LEASE_NAME, namespace=NAMESPACE, body=lease
-    )
+    
+    # Use resource version for optimistic concurrency control
+    # This prevents race conditions when multiple pods try to update the same lease
+    try:
+        return coord_api.patch_namespaced_lease(
+            name=LEASE_NAME, namespace=NAMESPACE, body=lease
+        )
+    except ApiException as e:
+        if e.status == 409:  # Conflict due to resource version mismatch
+            logger.debug(f"Lease patch conflict (409) - resource version changed")
+            raise  # Let the caller handle the conflict
+        else:
+            logger.error(f"Unexpected error patching lease: {e}")
+            raise
 
 
 def try_acquire_leader() -> bool:
-    """Attempt to acquire leadership via lease mechanism."""
+    """Attempt to acquire leadership via lease mechanism with proper race condition handling."""
     global current_leadership_state
 
     # Note: With the new design, leadership is always allowed for operational visibility.
     # Forging permission is handled separately in ensure_secrets() and update_*() functions.
     # This ensures the CRD is always kept up-to-date even when forging is disabled.
 
-    try:
-        lease = get_lease()
-        now = datetime.now(timezone.utc)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Always get fresh lease state to avoid stale reads
+            lease = get_lease()
+            now = datetime.now(timezone.utc)
 
-        if not lease:
-            lease = create_lease()
+            if not lease:
+                try:
+                    lease = create_lease()
+                    # If lease creation succeeded, we might be able to claim it
+                    # but we need to get the fresh state after creation
+                    lease = get_lease()
+                except ApiException as e:
+                    if e.status == 409:  # Already exists
+                        lease = get_lease()  # Get the existing lease
+                    else:
+                        raise
 
-        holder = getattr(lease.spec, "holder_identity", "")
-        lease_duration = int(
-            getattr(lease.spec, "lease_duration_seconds", LEASE_DURATION)
-        )
-        renew_time = getattr(lease.spec, "renew_time", None)
+            if not lease:
+                logger.warning("Could not get lease even after creation attempt")
+                return False
 
-        # Check if lease is expired
-        expired = True
-        if renew_time:
-            renew_time_dt = parse_k8s_time(renew_time)
-            expired = (renew_time_dt + timedelta(seconds=lease_duration)) < now
+            holder = getattr(lease.spec, "holder_identity", "")
+            lease_duration = int(
+                getattr(lease.spec, "lease_duration_seconds", LEASE_DURATION)
+            )
+            renew_time = getattr(lease.spec, "renew_time", None)
 
-        # Try to acquire if lease is expired, vacant, or we already hold it
-        if expired or holder == "" or holder == POD_NAME:
-            old_holder = holder
-            lease.spec.holder_identity = POD_NAME
-            lease.spec.renew_time = now.isoformat()
+            # Check if lease is expired
+            expired = True
+            if renew_time:
+                renew_time_dt = parse_k8s_time(renew_time)
+                expired = (renew_time_dt + timedelta(seconds=lease_duration)) < now
 
-            try:
-                patch_lease(lease)
+            # Determine if we can/should acquire the lease
+            can_acquire = False
+            acquisition_reason = ""
+            
+            if holder == POD_NAME:
+                can_acquire = True
+                acquisition_reason = "renewal"
+            elif expired:
+                can_acquire = True
+                acquisition_reason = f"expired_lease_from_{holder or 'vacant'}"
+            elif holder == "":
+                can_acquire = True
+                acquisition_reason = "vacant_lease"
 
-                # Log leadership transition
-                if old_holder != POD_NAME:
+            if can_acquire:
+                old_holder = holder
+                lease.spec.holder_identity = POD_NAME
+                lease.spec.renew_time = now.isoformat()
+                
+                # Increment lease transitions when taking over from another holder
+                if old_holder != POD_NAME and old_holder != "":
+                    current_transitions = getattr(lease.spec, "lease_transitions", 0)
+                    lease.spec.lease_transitions = current_transitions + 1
+
+                try:
+                    updated_lease = patch_lease(lease)
+                    
+                    # Validate that we actually got the lease
+                    final_holder = getattr(updated_lease.spec, "holder_identity", "")
+                    if final_holder != POD_NAME:
+                        logger.warning(f"Lease patch succeeded but holder is {final_holder}, not {POD_NAME}")
+                        if current_leadership_state:
+                            current_leadership_state = False
+                        return False
+
+                    # Log leadership transition only on actual changes
+                    if old_holder != POD_NAME:
+                        leadership_changes_total.inc()
+                        logger.info(
+                            f"Leadership acquired by {POD_NAME} (previous: {old_holder or 'vacant'}, reason: {acquisition_reason})"
+                        )
+                        current_leadership_state = True
+                    else:
+                        logger.debug(f"Leadership renewed by {POD_NAME}")
+                        # Ensure state is consistent
+                        current_leadership_state = True
+
+                    return True
+
+                except ApiException as e:
+                    if e.status == 409:  # Conflict - someone else got it
+                        logger.debug(f"Lease acquisition conflict (409) - attempt {attempt + 1}/{max_retries}")
+                        if attempt < max_retries - 1:
+                            # Wait with exponential backoff before retrying
+                            backoff_delay = calculate_exponential_backoff(attempt)
+                            logger.debug(f"Retrying after {backoff_delay:.2f}s backoff")
+                            time.sleep(backoff_delay)
+                            continue
+                        else:
+                            logger.debug("Max retries reached for lease acquisition")
+                            return False  # Failed to acquire lease after all retries
+                    else:
+                        logger.error(f"Unexpected error acquiring lease: {e}")
+                        raise
+            else:
+                # Cannot acquire lease - check if we lost leadership
+                if current_leadership_state and holder != POD_NAME:
                     leadership_changes_total.inc()
-                    logger.info(
-                        f"Leadership acquired by {POD_NAME} (previous: {old_holder or 'vacant'})"
-                    )
-                    current_leadership_state = True
-                else:
-                    logger.debug(f"Leadership renewed by {POD_NAME}")
+                    logger.info(f"Leadership lost to {holder}")
+                    current_leadership_state = False
 
-                return True
+            # If we reach here, we don't hold the lease
+            final_result = holder == POD_NAME
+            
+            # Validate consistency between lease holder and our state
+            if final_result != current_leadership_state:
+                logger.debug(f"Leadership state inconsistency detected: holder={holder}, pod={POD_NAME}, current_state={current_leadership_state}")
+                # Update state to match reality
+                current_leadership_state = final_result
+                if not final_result and previous_leadership_state:
+                    logger.info(f"Leadership state corrected: we no longer hold the lease (holder: {holder})")
+            
+            return final_result
 
-            except ApiException as e:
-                if e.status == 409:  # Conflict - someone else got it
-                    logger.debug("Failed to acquire lease due to conflict (409)")
-                else:
-                    logger.error(f"Unexpected error acquiring lease: {e}")
-                    raise
+        except Exception as e:
+            logger.error(f"Error in leader election attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                backoff_delay = calculate_exponential_backoff(attempt, base_delay=1.0)
+                logger.debug(f"Retrying after error backoff: {backoff_delay:.2f}s")
+                time.sleep(backoff_delay)
+                continue
+            else:
+                logger.error(f"Leader election failed after {max_retries} attempts")
+                return False
 
-        # Check if we lost leadership
-        if current_leadership_state and holder != POD_NAME:
-            leadership_changes_total.inc()
-            logger.info(f"Leadership lost to {holder}")
-            current_leadership_state = False
-
-        return holder == POD_NAME
-
-    except Exception as e:
-        logger.error(f"Error in leader election: {e}")
-        return False
+    # Fallback - should not reach here
+    return current_leadership_state
 
 
 # -----------------------------
@@ -867,8 +1019,9 @@ def main():
                         provision_startup_credentials()
 
                     # No SIGHUP during startup phase
-                    # Sleep and check again
-                    time.sleep(SLEEP_INTERVAL)
+                    # Sleep and check again (with jitter even during startup)
+                    startup_sleep = calculate_jittered_sleep(SLEEP_INTERVAL)
+                    time.sleep(startup_sleep)
                     continue
 
                 logger.debug(
@@ -886,6 +1039,7 @@ def main():
 
                 # Try to acquire leadership
                 logger.debug("Attempting to acquire leadership...")
+                previous_leadership_state = current_leadership_state  # Track previous state
                 is_leader = try_acquire_leader()
                 logger.debug(f"Leadership acquisition result: {is_leader}")
 
@@ -902,8 +1056,10 @@ def main():
                 update_leader_status(is_leader)
                 update_metrics(is_leader)
 
-                # Sleep until next iteration
-                time.sleep(SLEEP_INTERVAL)
+                # Sleep until next iteration with jitter to prevent synchronized wake-ups
+                jittered_sleep = calculate_jittered_sleep(SLEEP_INTERVAL)
+                logger.debug(f"Sleeping for {jittered_sleep:.2f}s (base: {SLEEP_INTERVAL}s + jitter)")
+                time.sleep(jittered_sleep)
 
             except KeyboardInterrupt:
                 logger.info("Received interrupt signal, shutting down gracefully")

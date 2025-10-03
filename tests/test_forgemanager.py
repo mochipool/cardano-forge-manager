@@ -596,8 +596,12 @@ class TestLeadershipElection(unittest.TestCase):
         mock_lease.spec = Mock(spec=V1LeaseSpec)
         mock_lease.spec.holder_identity = holder
         mock_lease.spec.lease_duration_seconds = 15
-        # Format timestamp as expected by parse_k8s_time
+        # Format timestamp as expected by parse_k8s_time (ISO format with Z timezone)
         mock_lease.spec.renew_time = renew_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        mock_lease.spec.lease_transitions = 0
+        # Add resource version for optimistic concurrency
+        mock_lease.metadata = Mock()
+        mock_lease.metadata.resource_version = "123"
 
         return mock_lease
 
@@ -613,6 +617,10 @@ class TestLeadershipElection(unittest.TestCase):
         # Mock vacant lease
         vacant_lease = self.create_mock_lease(holder="")
         self.mock_coord_api.read_namespaced_lease.return_value = vacant_lease
+        
+        # Mock the patch operation to return a lease with this pod as holder
+        patched_lease = self.create_mock_lease(holder=self.pod_name)
+        self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
 
         result = forgemanager.try_acquire_leader()
 
@@ -632,6 +640,10 @@ class TestLeadershipElection(unittest.TestCase):
         # Mock expired lease held by another pod
         expired_lease = self.create_mock_lease(holder="other-pod", expired=True)
         self.mock_coord_api.read_namespaced_lease.return_value = expired_lease
+        
+        # Mock the patch operation to return a lease with this pod as holder
+        patched_lease = self.create_mock_lease(holder=self.pod_name)
+        self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
 
         result = forgemanager.try_acquire_leader()
 
@@ -650,6 +662,10 @@ class TestLeadershipElection(unittest.TestCase):
         # Mock lease already held by this pod
         current_lease = self.create_mock_lease(holder=self.pod_name)
         self.mock_coord_api.read_namespaced_lease.return_value = current_lease
+        
+        # Mock the patch operation to return a lease with this pod as holder
+        patched_lease = self.create_mock_lease(holder=self.pod_name)
+        self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
 
         # Set current state as leader
         forgemanager.current_leadership_state = True
@@ -667,6 +683,10 @@ class TestLeadershipElection(unittest.TestCase):
         vacant_lease = self.create_mock_lease(holder="")
         self.mock_coord_api.read_namespaced_lease.return_value = vacant_lease
         
+        # Mock the patch operation to return a lease with this pod as holder
+        patched_lease = self.create_mock_lease(holder=self.pod_name)
+        self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
+        
         # Set initial state as not leader
         forgemanager.current_leadership_state = False
 
@@ -676,8 +696,9 @@ class TestLeadershipElection(unittest.TestCase):
         self.assertTrue(result)
         self.assertTrue(forgemanager.current_leadership_state)
 
+    @patch("forgemanager.time.sleep")  # Speed up test by mocking sleep
     @patch("forgemanager.cluster_manager")
-    def test_try_acquire_leader_lease_conflict(self, mock_cluster_manager):
+    def test_try_acquire_leader_lease_conflict(self, mock_cluster_manager, mock_sleep):
         """Test leadership acquisition with lease conflict (409)."""
         from kubernetes.client.rest import ApiException
 
@@ -687,18 +708,24 @@ class TestLeadershipElection(unittest.TestCase):
             "allowed",
         )
 
-        # Mock vacant lease
-        vacant_lease = self.create_mock_lease(holder="")
+        # Mock vacant lease - use current time to avoid parsing issues
+        current_time = datetime.now(timezone.utc)
+        vacant_lease = self.create_mock_lease(holder="", renew_time=current_time)
         self.mock_coord_api.read_namespaced_lease.return_value = vacant_lease
 
-        # Mock 409 conflict on patch
+        # Mock 409 conflict on patch for all attempts (simulate race condition)
         self.mock_coord_api.patch_namespaced_lease.side_effect = ApiException(
             status=409
         )
 
         result = forgemanager.try_acquire_leader()
 
+        # After 3 retries with 409 conflicts, should return False
         self.assertFalse(result)
+        self.assertFalse(forgemanager.current_leadership_state)
+        
+        # Verify it tried multiple times (3 retries)
+        self.assertEqual(self.mock_coord_api.patch_namespaced_lease.call_count, 3)
 
     @patch("forgemanager.cluster_manager")
     def test_try_acquire_leader_lost_to_other_pod(self, mock_cluster_manager):
@@ -1342,18 +1369,37 @@ class TestIntegrationScenarios(unittest.TestCase):
             "allowed",
         )
 
-        # Mock lease acquisition success
+        # Create proper mock lease with metadata
         mock_lease = Mock()
+        mock_lease.spec = Mock()
         mock_lease.spec.holder_identity = ""
         mock_lease.spec.lease_duration_seconds = 15
-        mock_lease.spec.renew_time = datetime.now(timezone.utc).isoformat()
+        mock_lease.spec.renew_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        mock_lease.spec.lease_transitions = 0
+        mock_lease.metadata = Mock()
+        mock_lease.metadata.resource_version = "123"
 
         self.mock_coord_api.read_namespaced_lease.return_value = mock_lease
+        
+        # Mock the patch operation to return updated lease with this pod as holder
+        patched_lease = Mock()
+        patched_lease.spec = Mock()
+        patched_lease.spec.holder_identity = "cardano-bp-0"  # Use actual pod name
+        patched_lease.spec.lease_duration_seconds = 15
+        patched_lease.spec.renew_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
 
-        # First call - acquire leadership
-        result1 = forgemanager.try_acquire_leader()
-        self.assertTrue(result1)
-        self.assertTrue(forgemanager.current_leadership_state)
+        # Set pod name for this test
+        original_pod_name = forgemanager.POD_NAME
+        forgemanager.POD_NAME = "cardano-bp-0"
+        
+        try:
+            # First call - acquire leadership
+            result1 = forgemanager.try_acquire_leader()
+            self.assertTrue(result1)
+            self.assertTrue(forgemanager.current_leadership_state)
+        finally:
+            forgemanager.POD_NAME = original_pod_name
 
         # Mock credentials need to be provisioned
         mock_ensure.return_value = True
@@ -1365,30 +1411,40 @@ class TestIntegrationScenarios(unittest.TestCase):
     @patch("forgemanager.cluster_manager")
     def test_cluster_management_integration(self, mock_cluster_manager):
         """Test integration with cluster management system."""
-        # Test blocked by cluster management
-        mock_cluster_manager.should_allow_local_leadership.return_value = (
-            False,
-            "cluster_disabled",
-        )
-
-        result = forgemanager.try_acquire_leader()
-        self.assertFalse(result)
-
-        # Test allowed by cluster management
+        # Note: In the new design, leadership acquisition is always allowed
+        # Cluster management affects forging permissions, not leadership acquisition
         mock_cluster_manager.should_allow_local_leadership.return_value = (
             True,
             "cluster_enabled",
         )
 
-        # Mock successful lease acquisition
+        # Create proper mock lease with metadata
         mock_lease = Mock()
+        mock_lease.spec = Mock()
         mock_lease.spec.holder_identity = ""
         mock_lease.spec.lease_duration_seconds = 15
-        mock_lease.spec.renew_time = datetime.now(timezone.utc).isoformat()
+        mock_lease.spec.renew_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        mock_lease.spec.lease_transitions = 0
+        mock_lease.metadata = Mock()
+        mock_lease.metadata.resource_version = "123"
+        
         self.mock_coord_api.read_namespaced_lease.return_value = mock_lease
+        
+        # Mock the patch operation to return updated lease with this pod as holder
+        patched_lease = Mock()
+        patched_lease.spec = Mock()
+        patched_lease.spec.holder_identity = "cardano-bp-0"
+        self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
 
-        result = forgemanager.try_acquire_leader()
-        self.assertTrue(result)
+        # Set pod name for this test
+        original_pod_name = forgemanager.POD_NAME
+        forgemanager.POD_NAME = "cardano-bp-0"
+        
+        try:
+            result = forgemanager.try_acquire_leader()
+            self.assertTrue(result)
+        finally:
+            forgemanager.POD_NAME = original_pod_name
 
     def test_signal_handling_integration(self):
         """Test signal handling integration."""

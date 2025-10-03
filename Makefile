@@ -60,7 +60,6 @@ venv: ## Create Python virtual environment
 	@echo "$(GREEN)Virtual environment created at $(VENV_DIR)$(NC)"
 	@echo "$(YELLOW)To activate: source $(VENV_DIR)/bin/activate$(NC)"
 
-$(VENV_DIR): venv
 
 .PHONY: install
 install: $(VENV_DIR) ## Install dependencies in virtual environment
@@ -77,27 +76,27 @@ install: $(VENV_DIR) ## Install dependencies in virtual environment
 
 # Testing targets
 .PHONY: test
-test: $(VENV_DIR) ## Run all tests
+test: install ## Run all tests
 	@echo "$(GREEN)Running all tests...$(NC)"
 	@PYTHONPATH=$(SRC_DIR) $(VENV_PYTEST) $(PYTEST_ARGS) $(TESTS_DIR)
 
 .PHONY: test-multi-tenant
-test-multi-tenant: $(VENV_DIR) ## Run multi-tenant tests only
+test-multi-tenant: install ## Run multi-tenant tests only
 	@echo "$(GREEN)Running multi-tenant tests...$(NC)"
 	@PYTHONPATH=$(SRC_DIR) $(VENV_PYTEST) $(PYTEST_ARGS) $(TESTS_DIR)/test_cluster_management.py::TestMultiTenantSupport
 
 .PHONY: test-cluster
-test-cluster: $(VENV_DIR) ## Run cluster management tests
+test-cluster: install ## Run cluster management tests
 	@echo "$(GREEN)Running cluster management tests...$(NC)"
 	@PYTHONPATH=$(SRC_DIR) $(VENV_PYTEST) $(PYTEST_ARGS) $(TESTS_DIR)/test_cluster_management.py
 
 .PHONY: test-forgemanager
-test-forgemanager: $(VENV_DIR) ## Run forge manager tests
+test-forgemanager: install ## Run forge manager tests
 	@echo "$(GREEN)Running forge manager tests...$(NC)"
 	@PYTHONPATH=$(SRC_DIR) $(VENV_PYTEST) $(PYTEST_ARGS) $(TESTS_DIR)/test_forgemanager.py
 
 .PHONY: test-coverage
-test-coverage: $(VENV_DIR) ## Run tests with coverage report
+test-coverage: install ## Run tests with coverage report
 	@echo "$(GREEN)Running tests with coverage...$(NC)"
 	@PYTHONPATH=$(SRC_DIR) $(VENV_PYTEST) $(PYTEST_ARGS) \
 		--cov=$(SRC_DIR) \
@@ -108,7 +107,7 @@ test-coverage: $(VENV_DIR) ## Run tests with coverage report
 	@echo "$(GREEN)Coverage report generated in htmlcov/index.html$(NC)"
 
 .PHONY: test-specific
-test-specific: $(VENV_DIR) ## Run specific test (use TEST=test_name)
+test-specific: install ## Run specific test (use TEST=test_name)
 	@if [ -z "$(TEST)" ]; then \
 		echo "$(RED)Please specify TEST variable, e.g., make test-specific TEST=test_pool_isolation$(NC)"; \
 		exit 1; \
@@ -173,7 +172,7 @@ ci: install check test-coverage ## Run full CI pipeline locally
 	@echo "$(GREEN)Full CI pipeline completed successfully!$(NC)"
 
 .PHONY: quick-test
-quick-test: $(VENV_DIR) ## Run quick test suite
+quick-test: install ## Run quick test suite
 	@echo "$(GREEN)Running quick tests...$(NC)"
 	@PYTHONPATH=$(SRC_DIR) $(VENV_PYTEST) -q --tb=no $(TESTS_DIR)
 
