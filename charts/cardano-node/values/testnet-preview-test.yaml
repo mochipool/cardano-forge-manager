@@ -75,7 +75,7 @@ forgeManager:
   clusterManagement:
     enabled: true
     # Region identifier (required for multi-cluster)
-    region: "us-east-1"  # e.g., us-east-1, eu-west-1, ap-southeast-1
+    region: "cn-south-1"  # e.g., us-east-1, eu-west-1, ap-southeast-1
   
   # Legacy CRD for local leader election
   legacy:
