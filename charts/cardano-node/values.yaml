@@ -576,6 +576,43 @@ healthChecks:
       periodSeconds: 15  # More frequent checks for readiness
       timeoutSeconds: 10
       failureThreshold: 5  # Allow more failures before marking unready
+  
+  # Forge manager health checks
+  forgeManager:
+    # Startup probe to ensure credentials are provisioned before cardano-node starts
+    # This prevents cardano-node from failing due to missing credential files
+    startupProbe:
+      enabled: true  # Enable by default when forge manager is enabled
+      httpGet:
+        path: /startup-status
+        port: 8000  # Forge manager metrics port
+      initialDelaySeconds: 5  # Start checking quickly after container start
+      periodSeconds: 3  # Check frequently during startup
+      timeoutSeconds: 2  # Short timeout for quick feedback
+      failureThreshold: 60  # Allow up to 3 minutes for credential provisioning (60 * 3s)
+      successThreshold: 1  # Only need one success to proceed
+    
+    # Readiness probe for forge manager
+    readinessProbe:
+      enabled: true
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    
+    # Liveness probe for forge manager
+    livenessProbe:
+      enabled: true
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 5
 
 # ===========================================
 # MONITORING

@@ -19,10 +19,12 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Optional
+from urllib.parse import urlparse
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from prometheus_client import Counter, Gauge, Info, start_http_server
+from prometheus_client import Counter, Gauge, Info, start_http_server, generate_latest
 
 # Cluster management (extension)
 import cluster_manager
@@ -976,18 +978,139 @@ def try_acquire_leader() -> bool:
 
 
 # -----------------------------
-# Metrics Server
+# HTTP Server for Metrics and Startup Status
 # -----------------------------
 
 
-def start_metrics_server():
-    """Start Prometheus metrics server in background thread."""
+class ForgeManagerHTTPHandler(BaseHTTPRequestHandler):
+    """Custom HTTP handler that serves both Prometheus metrics and startup status."""
+    
+    def do_GET(self):
+        """Handle GET requests for metrics and startup status."""
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        
+        if path == "/metrics":
+            # Serve Prometheus metrics
+            try:
+                metrics_data = generate_latest()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(metrics_data)
+            except Exception as e:
+                logger.error(f"Error generating metrics: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Error generating metrics')
+        
+        elif path == "/startup-status":
+            # Serve startup status for startupProbe
+            try:
+                is_ready = check_startup_credentials_ready()
+                if is_ready:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    response = {
+                        "status": "ready",
+                        "message": "Startup credentials provisioned successfully",
+                        "credentials_provisioned": startup_credentials_provisioned,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                    import json
+                    self.wfile.write(json.dumps(response).encode())
+                else:
+                    self.send_response(503)  # Service Unavailable
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    response = {
+                        "status": "not_ready",
+                        "message": "Startup credentials not yet provisioned",
+                        "credentials_provisioned": startup_credentials_provisioned,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                    import json
+                    self.wfile.write(json.dumps(response).encode())
+            except Exception as e:
+                logger.error(f"Error checking startup status: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Error checking startup status')
+        
+        elif path == "/health":
+            # Simple health check endpoint
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        
+        else:
+            # 404 for unknown paths
+            self.send_response(404)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+    
+    def log_message(self, format, *args):
+        """Override to use our logger instead of stderr."""
+        logger.debug(f"HTTP: {format % args}")
+
+
+def check_startup_credentials_ready() -> bool:
+    """Check if startup credentials are ready for cardano-node.
+    
+    Returns True if:
+    1. startup_credentials_provisioned flag is True, OR
+    2. All required credential files exist at their target locations
+    """
+    global startup_credentials_provisioned
+    
+    # If the flag is set, we're ready
+    if startup_credentials_provisioned:
+        return True
+    
+    # Check if all required credential files exist
+    required_files = [TARGET_KES_KEY, TARGET_VRF_KEY, TARGET_OP_CERT]
+    
     try:
-        start_http_server(METRICS_PORT)
-        logger.info(f"Prometheus metrics server started on port {METRICS_PORT}")
+        for file_path in required_files:
+            if not os.path.exists(file_path):
+                logger.debug(f"Startup credential not ready: {file_path} does not exist")
+                return False
+            
+            # Check that the file is readable and not empty
+            stat_info = os.stat(file_path)
+            if stat_info.st_size == 0:
+                logger.debug(f"Startup credential not ready: {file_path} is empty")
+                return False
+        
+        logger.debug("All startup credentials are present and non-empty")
+        return True
+        
     except Exception as e:
-        logger.error(f"Failed to start metrics server on port {METRICS_PORT}: {e}")
-        raise
+        logger.debug(f"Error checking startup credentials: {e}")
+        return False
+
+
+def start_metrics_server():
+    """Start HTTP server for both Prometheus metrics and startup status."""
+    def run_server():
+        try:
+            server = HTTPServer(('0.0.0.0', METRICS_PORT), ForgeManagerHTTPHandler)
+            logger.info(f"HTTP server started on port {METRICS_PORT} (metrics: /metrics, startup: /startup-status)")
+            server.serve_forever()
+        except Exception as e:
+            logger.error(f"HTTP server error: {e}")
+    
+    # Start server in background thread
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    
+    # Give server a moment to start
+    time.sleep(0.5)
 
 
 # -----------------------------

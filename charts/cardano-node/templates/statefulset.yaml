@@ -248,6 +248,18 @@ spec:
             - containerPort: {{ .Values.forgeManager.metricsPort }}
               name: forge-metrics
               protocol: TCP
+          {{- if .Values.healthChecks.forgeManager.startupProbe.enabled }}
+          startupProbe:
+            {{- omit .Values.healthChecks.forgeManager.startupProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if .Values.healthChecks.forgeManager.livenessProbe.enabled }}
+          livenessProbe:
+            {{- omit .Values.healthChecks.forgeManager.livenessProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if .Values.healthChecks.forgeManager.readinessProbe.enabled }}
+          readinessProbe:
+            {{- omit .Values.healthChecks.forgeManager.readinessProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources.forgeManager | nindent 12 }}
           securityContext:

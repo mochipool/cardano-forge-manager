@@ -162,12 +162,18 @@ graph TB
    - Non-leaders: Removes keys, sends SIGHUP to disable forging
    - Secure file permissions and immediate cleanup
 
-5. **Health-Based Failover** 🏥
+5. **Startup Synchronization** 🔄
+   - Native sidecar pattern with startup probes (K8s 1.29+)
+   - Ensures cardano-node starts only after credentials are ready
+   - Eliminates restart loops from missing credential files
+   - HTTP endpoint for startup status monitoring
+
+6. **Health-Based Failover** 🏥
    - Optional health check integration
    - Automatic priority adjustment on health failures
    - Cross-cluster failover when primary becomes unhealthy
 
-6. **Monitoring** 📊
+7. **Monitoring** 📊
    - Prometheus metrics for alerting
    - CRD status updates (CardanoLeader + CardanoForgeCluster)
    - Comprehensive logging for troubleshooting
