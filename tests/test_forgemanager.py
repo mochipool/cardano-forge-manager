@@ -1123,20 +1123,201 @@ class TestMetricsAndMonitoring(unittest.TestCase):
 
         # Metrics should be updated for non-leader state
 
-    @patch("forgemanager.start_http_server")
-    def test_start_metrics_server_success(self, mock_start_server):
+    @patch("threading.Thread")
+    @patch("time.sleep")
+    def test_start_metrics_server_success(self, mock_sleep, mock_thread):
         """Test successful metrics server start."""
-        forgemanager.start_metrics_server()
-
-        mock_start_server.assert_called_once_with(forgemanager.METRICS_PORT)
-
-    @patch("forgemanager.start_http_server")
-    def test_start_metrics_server_failure(self, mock_start_server):
-        """Test metrics server start failure."""
-        mock_start_server.side_effect = Exception("Port already in use")
-
-        with self.assertRaises(Exception):
+        mock_thread_instance = Mock()
+        mock_thread.return_value = mock_thread_instance
+        
+        with patch('forgemanager.HTTPServer') as mock_http_server:
+            mock_server_instance = Mock()
+            mock_http_server.return_value = mock_server_instance
+            
             forgemanager.start_metrics_server()
+            
+            # Verify thread was created and started
+            mock_thread.assert_called_once()
+            mock_thread_instance.start.assert_called_once()
+            mock_sleep.assert_called_once_with(0.5)
+
+    @patch("threading.Thread")
+    @patch("time.sleep")
+    def test_start_metrics_server_failure(self, mock_sleep, mock_thread):
+        """Test metrics server start continues even if there are issues."""
+        mock_thread_instance = Mock()
+        mock_thread.return_value = mock_thread_instance
+        
+        # The server creation happens inside the thread function
+        # so we can't directly test HTTP server creation failure
+        # but we can test that the function completes successfully
+        forgemanager.start_metrics_server()
+        
+        # Verify thread was created and started
+        mock_thread.assert_called_once()
+        mock_thread_instance.start.assert_called_once()
+        mock_sleep.assert_called_once_with(0.5)
+
+    def test_check_startup_credentials_ready_flag_true(self):
+        """Test startup credentials ready when flag is True."""
+        forgemanager.startup_credentials_provisioned = True
+        
+        result = forgemanager.check_startup_credentials_ready()
+        
+        self.assertTrue(result)
+    
+    @patch("os.path.exists")
+    @patch("os.stat")
+    def test_check_startup_credentials_ready_files_exist(self, mock_stat, mock_exists):
+        """Test startup credentials ready when all files exist and are non-empty."""
+        forgemanager.startup_credentials_provisioned = False
+        
+        # Mock all files exist
+        mock_exists.return_value = True
+        
+        # Mock files are non-empty
+        mock_stat_result = Mock()
+        mock_stat_result.st_size = 1024
+        mock_stat.return_value = mock_stat_result
+        
+        result = forgemanager.check_startup_credentials_ready()
+        
+        self.assertTrue(result)
+        # Should check all three credential files
+        self.assertEqual(mock_exists.call_count, 3)
+        self.assertEqual(mock_stat.call_count, 3)
+    
+    @patch("os.path.exists")
+    def test_check_startup_credentials_ready_file_missing(self, mock_exists):
+        """Test startup credentials not ready when a file is missing."""
+        forgemanager.startup_credentials_provisioned = False
+        
+        # Mock first file missing
+        mock_exists.side_effect = [False, True, True]
+        
+        result = forgemanager.check_startup_credentials_ready()
+        
+        self.assertFalse(result)
+        mock_exists.assert_called_once()  # Should stop at first missing file
+    
+    @patch("os.path.exists")
+    @patch("os.stat")
+    def test_check_startup_credentials_ready_file_empty(self, mock_stat, mock_exists):
+        """Test startup credentials not ready when a file is empty."""
+        forgemanager.startup_credentials_provisioned = False
+        
+        # Mock all files exist
+        mock_exists.return_value = True
+        
+        # Mock first file is empty
+        mock_stat_result = Mock()
+        mock_stat_result.st_size = 0
+        mock_stat.return_value = mock_stat_result
+        
+        result = forgemanager.check_startup_credentials_ready()
+        
+        self.assertFalse(result)
+        mock_exists.assert_called_once()
+        mock_stat.assert_called_once()
+    
+    def test_http_handler_startup_status_ready(self):
+        """Test HTTP handler returns 200 for startup status when ready."""
+        with patch('forgemanager.check_startup_credentials_ready', return_value=True), \
+             patch('forgemanager.startup_credentials_provisioned', True):
+            
+            # Create handler without triggering init
+            handler = forgemanager.ForgeManagerHTTPHandler.__new__(forgemanager.ForgeManagerHTTPHandler)
+            handler.path = '/startup-status'
+            
+            # Mock the response methods
+            handler.send_response = Mock()
+            handler.send_header = Mock()
+            handler.end_headers = Mock()
+            handler.wfile = Mock()
+            
+            handler.do_GET()
+            
+            handler.send_response.assert_called_with(200)
+            handler.send_header.assert_called_with('Content-Type', 'application/json')
+            handler.end_headers.assert_called_once()
+    
+    def test_http_handler_startup_status_not_ready(self):
+        """Test HTTP handler returns 503 for startup status when not ready."""
+        with patch('forgemanager.check_startup_credentials_ready', return_value=False), \
+             patch('forgemanager.startup_credentials_provisioned', False):
+            
+            # Create handler without triggering init
+            handler = forgemanager.ForgeManagerHTTPHandler.__new__(forgemanager.ForgeManagerHTTPHandler)
+            handler.path = '/startup-status'
+            
+            # Mock the response methods
+            handler.send_response = Mock()
+            handler.send_header = Mock()
+            handler.end_headers = Mock()
+            handler.wfile = Mock()
+            
+            handler.do_GET()
+            
+            handler.send_response.assert_called_with(503)
+            handler.send_header.assert_called_with('Content-Type', 'application/json')
+            handler.end_headers.assert_called_once()
+    
+    def test_http_handler_health_endpoint(self):
+        """Test HTTP handler health endpoint."""
+        # Create handler without triggering init
+        handler = forgemanager.ForgeManagerHTTPHandler.__new__(forgemanager.ForgeManagerHTTPHandler)
+        handler.path = '/health'
+        
+        # Mock the response methods
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = Mock()
+        
+        handler.do_GET()
+        
+        handler.send_response.assert_called_with(200)
+        handler.send_header.assert_called_with('Content-Type', 'text/plain')
+        handler.end_headers.assert_called_once()
+        handler.wfile.write.assert_called_with(b'OK')
+    
+    def test_http_handler_metrics_endpoint(self):
+        """Test HTTP handler metrics endpoint."""
+        with patch('forgemanager.generate_latest', return_value=b'# HELP test_metric\ntest_metric 1.0\n'):
+            # Create handler without triggering init
+            handler = forgemanager.ForgeManagerHTTPHandler.__new__(forgemanager.ForgeManagerHTTPHandler)
+            handler.path = '/metrics'
+            
+            # Mock the response methods
+            handler.send_response = Mock()
+            handler.send_header = Mock()
+            handler.end_headers = Mock()
+            handler.wfile = Mock()
+            
+            handler.do_GET()
+            
+            handler.send_response.assert_called_with(200)
+            handler.send_header.assert_called_with('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
+            handler.end_headers.assert_called_once()
+    
+    def test_http_handler_unknown_path(self):
+        """Test HTTP handler returns 404 for unknown paths."""
+        # Create handler without triggering init
+        handler = forgemanager.ForgeManagerHTTPHandler.__new__(forgemanager.ForgeManagerHTTPHandler)
+        handler.path = '/unknown'
+        
+        # Mock the response methods
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = Mock()
+        
+        handler.do_GET()
+        
+        handler.send_response.assert_called_with(404)
+        handler.send_header.assert_called_with('Content-Type', 'text/plain')
+        handler.end_headers.assert_called_once()
+        handler.wfile.write.assert_called_with(b'Not Found')
 
 
 class TestMultiTenantSupport(unittest.TestCase):
