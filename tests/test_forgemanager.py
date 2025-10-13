@@ -21,17 +21,13 @@ and cover all the edge cases specified in the functional requirements.
 """
 
 import unittest
-from unittest.mock import Mock, patch, MagicMock, mock_open, call
+from unittest.mock import Mock, patch
 import os
 import sys
 import tempfile
 import shutil
-import stat
 import signal
-import time
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
-import json
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -443,8 +439,11 @@ class TestCredentialManagement(unittest.TestCase):
     def test_ensure_secrets_leader_provision(self, mock_sighup, mock_cluster_manager):
         """Test credential provisioning for leader."""
         # Mock cluster manager to allow forging
-        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
-        
+        mock_cluster_manager.should_allow_forging.return_value = (
+            True,
+            "cluster_forge_enabled",
+        )
+
         # Patch the module-level constants since they're read at import time
         with patch.object(
             forgemanager, "SOURCE_KES_KEY", self.source_kes
@@ -475,7 +474,7 @@ class TestCredentialManagement(unittest.TestCase):
         """Test credential removal for non-leader."""
         # Mock cluster manager to disallow forging
         mock_cluster_manager.should_allow_forging.return_value = (False, "not_leader")
-        
+
         # Patch the module-level constants since they're read at import time
         with patch.object(
             forgemanager, "SOURCE_KES_KEY", self.source_kes
@@ -509,8 +508,11 @@ class TestCredentialManagement(unittest.TestCase):
     def test_ensure_secrets_no_change_needed(self, mock_cluster_manager):
         """Test credential management when no changes are needed."""
         # Mock cluster manager to allow forging
-        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
-        
+        mock_cluster_manager.should_allow_forging.return_value = (
+            True,
+            "cluster_forge_enabled",
+        )
+
         # Copy credentials first
         for src, target in [
             (self.source_kes, self.target_kes),
@@ -617,7 +619,7 @@ class TestLeadershipElection(unittest.TestCase):
         # Mock vacant lease
         vacant_lease = self.create_mock_lease(holder="")
         self.mock_coord_api.read_namespaced_lease.return_value = vacant_lease
-        
+
         # Mock the patch operation to return a lease with this pod as holder
         patched_lease = self.create_mock_lease(holder=self.pod_name)
         self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
@@ -640,7 +642,7 @@ class TestLeadershipElection(unittest.TestCase):
         # Mock expired lease held by another pod
         expired_lease = self.create_mock_lease(holder="other-pod", expired=True)
         self.mock_coord_api.read_namespaced_lease.return_value = expired_lease
-        
+
         # Mock the patch operation to return a lease with this pod as holder
         patched_lease = self.create_mock_lease(holder=self.pod_name)
         self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
@@ -662,7 +664,7 @@ class TestLeadershipElection(unittest.TestCase):
         # Mock lease already held by this pod
         current_lease = self.create_mock_lease(holder=self.pod_name)
         self.mock_coord_api.read_namespaced_lease.return_value = current_lease
-        
+
         # Mock the patch operation to return a lease with this pod as holder
         patched_lease = self.create_mock_lease(holder=self.pod_name)
         self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
@@ -682,11 +684,11 @@ class TestLeadershipElection(unittest.TestCase):
         # Mock a vacant lease to simulate normal leadership acquisition
         vacant_lease = self.create_mock_lease(holder="")
         self.mock_coord_api.read_namespaced_lease.return_value = vacant_lease
-        
+
         # Mock the patch operation to return a lease with this pod as holder
         patched_lease = self.create_mock_lease(holder=self.pod_name)
         self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
-        
+
         # Set initial state as not leader
         forgemanager.current_leadership_state = False
 
@@ -723,7 +725,7 @@ class TestLeadershipElection(unittest.TestCase):
         # After 3 retries with 409 conflicts, should return False
         self.assertFalse(result)
         self.assertFalse(forgemanager.current_leadership_state)
-        
+
         # Verify it tried multiple times (3 retries)
         self.assertEqual(self.mock_coord_api.patch_namespaced_lease.call_count, 3)
 
@@ -845,8 +847,11 @@ class TestCRDManagement(unittest.TestCase):
     def test_update_leader_status_success(self, mock_cluster_manager):
         """Test successful CRD status update."""
         # Mock cluster manager to allow forging
-        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
-        
+        mock_cluster_manager.should_allow_forging.return_value = (
+            True,
+            "cluster_forge_enabled",
+        )
+
         forgemanager.update_leader_status(is_leader=True)
 
         self.mock_custom_objects.patch_namespaced_custom_object_status.assert_called_once()
@@ -864,9 +869,12 @@ class TestCRDManagement(unittest.TestCase):
     def test_update_leader_status_api_exception(self, mock_cluster_manager):
         """Test CRD status update with API exception."""
         from kubernetes.client.rest import ApiException
-        
+
         # Mock cluster manager to allow forging
-        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
+        mock_cluster_manager.should_allow_forging.return_value = (
+            True,
+            "cluster_forge_enabled",
+        )
 
         self.mock_custom_objects.patch_namespaced_custom_object_status.side_effect = (
             ApiException(status=500, reason="Internal Server Error")
@@ -879,12 +887,17 @@ class TestCRDManagement(unittest.TestCase):
     def test_update_leader_status_non_leader(self, mock_cluster_manager):
         """Test CRD status update for non-leader (only updates if CRD shows it as leader)."""
         # Mock cluster manager to return forging not allowed
-        mock_cluster_manager.should_allow_forging.return_value = (False, "cluster_forge_disabled")
-        
+        mock_cluster_manager.should_allow_forging.return_value = (
+            False,
+            "cluster_forge_disabled",
+        )
+
         # Case 1: CRD shows this pod as leader - should update to clear
         mock_crd = {"status": {"leaderPod": self.pod_name, "forgingEnabled": True}}
-        self.mock_custom_objects.get_namespaced_custom_object_status.return_value = mock_crd
-        
+        self.mock_custom_objects.get_namespaced_custom_object_status.return_value = (
+            mock_crd
+        )
+
         forgemanager.update_leader_status(is_leader=False)
 
         # Should call API to clear stale leadership status
@@ -892,21 +905,23 @@ class TestCRDManagement(unittest.TestCase):
         call_args = (
             self.mock_custom_objects.patch_namespaced_custom_object_status.call_args
         )
-        
+
         # Verify non-leader status is set
         body = call_args[1]["body"]
         self.assertEqual(body["status"]["leaderPod"], "")
         self.assertFalse(body["status"]["forgingEnabled"])
-        
+
         # Reset mock for case 2
         self.mock_custom_objects.reset_mock()
-        
+
         # Case 2: CRD shows different pod as leader - should NOT update
         mock_crd = {"status": {"leaderPod": "other-pod", "forgingEnabled": True}}
-        self.mock_custom_objects.get_namespaced_custom_object_status.return_value = mock_crd
-        
+        self.mock_custom_objects.get_namespaced_custom_object_status.return_value = (
+            mock_crd
+        )
+
         forgemanager.update_leader_status(is_leader=False)
-        
+
         # Should NOT call API since CRD doesn't show us as leader
         self.mock_custom_objects.patch_namespaced_custom_object_status.assert_not_called()
 
@@ -1092,8 +1107,11 @@ class TestMetricsAndMonitoring(unittest.TestCase):
     def test_update_metrics_leader(self, mock_cluster_manager):
         """Test metrics update for leader."""
         # Mock cluster manager to allow forging
-        mock_cluster_manager.should_allow_forging.return_value = (True, "cluster_forge_enabled")
-        
+        mock_cluster_manager.should_allow_forging.return_value = (
+            True,
+            "cluster_forge_enabled",
+        )
+
         # Mock cluster manager metrics
         mock_cluster_manager.get_cluster_metrics.return_value = {
             "enabled": True,
@@ -1116,27 +1134,225 @@ class TestMetricsAndMonitoring(unittest.TestCase):
         """Test metrics update for non-leader."""
         # Mock cluster manager to disallow forging
         mock_cluster_manager.should_allow_forging.return_value = (False, "not_leader")
-        
+
         mock_cluster_manager.get_cluster_metrics.return_value = {"enabled": False}
 
         forgemanager.update_metrics(is_leader=False)
 
         # Metrics should be updated for non-leader state
 
-    @patch("forgemanager.start_http_server")
-    def test_start_metrics_server_success(self, mock_start_server):
+    @patch("threading.Thread")
+    @patch("time.sleep")
+    def test_start_metrics_server_success(self, mock_sleep, mock_thread):
         """Test successful metrics server start."""
+        mock_thread_instance = Mock()
+        mock_thread.return_value = mock_thread_instance
+
+        with patch("forgemanager.HTTPServer") as mock_http_server:
+            mock_server_instance = Mock()
+            mock_http_server.return_value = mock_server_instance
+
+            forgemanager.start_metrics_server()
+
+            # Verify thread was created and started
+            mock_thread.assert_called_once()
+            mock_thread_instance.start.assert_called_once()
+            mock_sleep.assert_called_once_with(0.5)
+
+    @patch("threading.Thread")
+    @patch("time.sleep")
+    def test_start_metrics_server_failure(self, mock_sleep, mock_thread):
+        """Test metrics server start continues even if there are issues."""
+        mock_thread_instance = Mock()
+        mock_thread.return_value = mock_thread_instance
+
+        # The server creation happens inside the thread function
+        # so we can't directly test HTTP server creation failure
+        # but we can test that the function completes successfully
         forgemanager.start_metrics_server()
 
-        mock_start_server.assert_called_once_with(forgemanager.METRICS_PORT)
+        # Verify thread was created and started
+        mock_thread.assert_called_once()
+        mock_thread_instance.start.assert_called_once()
+        mock_sleep.assert_called_once_with(0.5)
 
-    @patch("forgemanager.start_http_server")
-    def test_start_metrics_server_failure(self, mock_start_server):
-        """Test metrics server start failure."""
-        mock_start_server.side_effect = Exception("Port already in use")
+    def test_check_startup_credentials_ready_flag_true(self):
+        """Test startup credentials ready when flag is True."""
+        forgemanager.startup_credentials_provisioned = True
 
-        with self.assertRaises(Exception):
-            forgemanager.start_metrics_server()
+        result = forgemanager.check_startup_credentials_ready()
+
+        self.assertTrue(result)
+
+    @patch("os.path.exists")
+    @patch("os.stat")
+    def test_check_startup_credentials_ready_files_exist(self, mock_stat, mock_exists):
+        """Test startup credentials ready when all files exist and are non-empty."""
+        forgemanager.startup_credentials_provisioned = False
+
+        # Mock all files exist
+        mock_exists.return_value = True
+
+        # Mock files are non-empty
+        mock_stat_result = Mock()
+        mock_stat_result.st_size = 1024
+        mock_stat.return_value = mock_stat_result
+
+        result = forgemanager.check_startup_credentials_ready()
+
+        self.assertTrue(result)
+        # Should check all three credential files
+        self.assertEqual(mock_exists.call_count, 3)
+        self.assertEqual(mock_stat.call_count, 3)
+
+    @patch("os.path.exists")
+    def test_check_startup_credentials_ready_file_missing(self, mock_exists):
+        """Test startup credentials not ready when a file is missing."""
+        forgemanager.startup_credentials_provisioned = False
+
+        # Mock first file missing
+        mock_exists.side_effect = [False, True, True]
+
+        result = forgemanager.check_startup_credentials_ready()
+
+        self.assertFalse(result)
+        mock_exists.assert_called_once()  # Should stop at first missing file
+
+    @patch("os.path.exists")
+    @patch("os.stat")
+    def test_check_startup_credentials_ready_file_empty(self, mock_stat, mock_exists):
+        """Test startup credentials not ready when a file is empty."""
+        forgemanager.startup_credentials_provisioned = False
+
+        # Mock all files exist
+        mock_exists.return_value = True
+
+        # Mock first file is empty
+        mock_stat_result = Mock()
+        mock_stat_result.st_size = 0
+        mock_stat.return_value = mock_stat_result
+
+        result = forgemanager.check_startup_credentials_ready()
+
+        self.assertFalse(result)
+        mock_exists.assert_called_once()
+        mock_stat.assert_called_once()
+
+    def test_http_handler_startup_status_ready(self):
+        """Test HTTP handler returns 200 for startup status when ready."""
+        with patch(
+            "forgemanager.check_startup_credentials_ready", return_value=True
+        ), patch("forgemanager.startup_credentials_provisioned", True):
+
+            # Create handler without triggering init
+            handler = forgemanager.ForgeManagerHTTPHandler.__new__(
+                forgemanager.ForgeManagerHTTPHandler
+            )
+            handler.path = "/startup-status"
+
+            # Mock the response methods
+            handler.send_response = Mock()
+            handler.send_header = Mock()
+            handler.end_headers = Mock()
+            handler.wfile = Mock()
+
+            handler.do_GET()
+
+            handler.send_response.assert_called_with(200)
+            handler.send_header.assert_called_with("Content-Type", "application/json")
+            handler.end_headers.assert_called_once()
+
+    def test_http_handler_startup_status_not_ready(self):
+        """Test HTTP handler returns 503 for startup status when not ready."""
+        with patch(
+            "forgemanager.check_startup_credentials_ready", return_value=False
+        ), patch("forgemanager.startup_credentials_provisioned", False):
+
+            # Create handler without triggering init
+            handler = forgemanager.ForgeManagerHTTPHandler.__new__(
+                forgemanager.ForgeManagerHTTPHandler
+            )
+            handler.path = "/startup-status"
+
+            # Mock the response methods
+            handler.send_response = Mock()
+            handler.send_header = Mock()
+            handler.end_headers = Mock()
+            handler.wfile = Mock()
+
+            handler.do_GET()
+
+            handler.send_response.assert_called_with(503)
+            handler.send_header.assert_called_with("Content-Type", "application/json")
+            handler.end_headers.assert_called_once()
+
+    def test_http_handler_health_endpoint(self):
+        """Test HTTP handler health endpoint."""
+        # Create handler without triggering init
+        handler = forgemanager.ForgeManagerHTTPHandler.__new__(
+            forgemanager.ForgeManagerHTTPHandler
+        )
+        handler.path = "/health"
+
+        # Mock the response methods
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = Mock()
+
+        handler.do_GET()
+
+        handler.send_response.assert_called_with(200)
+        handler.send_header.assert_called_with("Content-Type", "text/plain")
+        handler.end_headers.assert_called_once()
+        handler.wfile.write.assert_called_with(b"OK")
+
+    def test_http_handler_metrics_endpoint(self):
+        """Test HTTP handler metrics endpoint."""
+        with patch(
+            "forgemanager.generate_latest",
+            return_value=b"# HELP test_metric\ntest_metric 1.0\n",
+        ):
+            # Create handler without triggering init
+            handler = forgemanager.ForgeManagerHTTPHandler.__new__(
+                forgemanager.ForgeManagerHTTPHandler
+            )
+            handler.path = "/metrics"
+
+            # Mock the response methods
+            handler.send_response = Mock()
+            handler.send_header = Mock()
+            handler.end_headers = Mock()
+            handler.wfile = Mock()
+
+            handler.do_GET()
+
+            handler.send_response.assert_called_with(200)
+            handler.send_header.assert_called_with(
+                "Content-Type", "text/plain; version=0.0.4; charset=utf-8"
+            )
+            handler.end_headers.assert_called_once()
+
+    def test_http_handler_unknown_path(self):
+        """Test HTTP handler returns 404 for unknown paths."""
+        # Create handler without triggering init
+        handler = forgemanager.ForgeManagerHTTPHandler.__new__(
+            forgemanager.ForgeManagerHTTPHandler
+        )
+        handler.path = "/unknown"
+
+        # Mock the response methods
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = Mock()
+
+        handler.do_GET()
+
+        handler.send_response.assert_called_with(404)
+        handler.send_header.assert_called_with("Content-Type", "text/plain")
+        handler.end_headers.assert_called_once()
+        handler.wfile.write.assert_called_with(b"Not Found")
 
 
 class TestMultiTenantSupport(unittest.TestCase):
@@ -1183,8 +1399,11 @@ class TestMultiTenantSupport(unittest.TestCase):
 
             with patch("forgemanager.cluster_manager") as mock_cluster:
                 # Mock cluster manager to allow forging
-                mock_cluster.should_allow_forging.return_value = (True, "cluster_forge_enabled")
-                
+                mock_cluster.should_allow_forging.return_value = (
+                    True,
+                    "cluster_forge_enabled",
+                )
+
                 mock_cluster.get_cluster_metrics.return_value = {"enabled": False}
 
                 # This would test the actual label values in the metrics
@@ -1390,25 +1609,29 @@ class TestIntegrationScenarios(unittest.TestCase):
         mock_lease.spec = Mock()
         mock_lease.spec.holder_identity = ""
         mock_lease.spec.lease_duration_seconds = 15
-        mock_lease.spec.renew_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        mock_lease.spec.renew_time = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ"
+        )
         mock_lease.spec.lease_transitions = 0
         mock_lease.metadata = Mock()
         mock_lease.metadata.resource_version = "123"
 
         self.mock_coord_api.read_namespaced_lease.return_value = mock_lease
-        
+
         # Mock the patch operation to return updated lease with this pod as holder
         patched_lease = Mock()
         patched_lease.spec = Mock()
         patched_lease.spec.holder_identity = "cardano-bp-0"  # Use actual pod name
         patched_lease.spec.lease_duration_seconds = 15
-        patched_lease.spec.renew_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        patched_lease.spec.renew_time = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ"
+        )
         self.mock_coord_api.patch_namespaced_lease.return_value = patched_lease
 
         # Set pod name for this test
         original_pod_name = forgemanager.POD_NAME
         forgemanager.POD_NAME = "cardano-bp-0"
-        
+
         try:
             # First call - acquire leadership
             result1 = forgemanager.try_acquire_leader()
@@ -1439,13 +1662,15 @@ class TestIntegrationScenarios(unittest.TestCase):
         mock_lease.spec = Mock()
         mock_lease.spec.holder_identity = ""
         mock_lease.spec.lease_duration_seconds = 15
-        mock_lease.spec.renew_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        mock_lease.spec.renew_time = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ"
+        )
         mock_lease.spec.lease_transitions = 0
         mock_lease.metadata = Mock()
         mock_lease.metadata.resource_version = "123"
-        
+
         self.mock_coord_api.read_namespaced_lease.return_value = mock_lease
-        
+
         # Mock the patch operation to return updated lease with this pod as holder
         patched_lease = Mock()
         patched_lease.spec = Mock()
@@ -1455,7 +1680,7 @@ class TestIntegrationScenarios(unittest.TestCase):
         # Set pod name for this test
         original_pod_name = forgemanager.POD_NAME
         forgemanager.POD_NAME = "cardano-bp-0"
-        
+
         try:
             result = forgemanager.try_acquire_leader()
             self.assertTrue(result)

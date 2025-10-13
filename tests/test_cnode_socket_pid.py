@@ -84,7 +84,7 @@ def test_startup_phase_logic():
 
     NODE_SOCKET = "/ipc/node.socket"
     socket_ready = os.path.exists(NODE_SOCKET)
-    
+
     if socket_ready:
         print("✅ Startup phase logic: Node should be READY for leadership election")
         assert True, "Socket ready, node should be ready"

@@ -112,7 +112,7 @@ class TestClusterForgeManager(unittest.TestCase):
         allowed, reason = self.cluster_mgr.should_allow_local_leadership()
         self.assertTrue(allowed)
         self.assertIn("leadership_allowed_for_visibility", reason)
-        
+
         # But forging should be disabled
         forging_allowed, forging_reason = self.cluster_mgr.should_allow_forging()
         self.assertFalse(forging_allowed)
@@ -128,7 +128,7 @@ class TestClusterForgeManager(unittest.TestCase):
         allowed, reason = self.cluster_mgr.should_allow_local_leadership()
         self.assertTrue(allowed)
         self.assertIn("leadership_allowed_for_visibility", reason)
-        
+
         # And forging should also be allowed
         forging_allowed, forging_reason = self.cluster_mgr.should_allow_forging()
         self.assertTrue(forging_allowed)
@@ -145,7 +145,7 @@ class TestClusterForgeManager(unittest.TestCase):
         allowed, reason = self.cluster_mgr.should_allow_local_leadership()
         self.assertTrue(allowed)
         self.assertIn("leadership_allowed_for_visibility", reason)
-        
+
         # Forging decision should be separate - test high priority (should allow)
         self.cluster_mgr._cluster_forge_enabled = True  # Simulate high priority result
         forging_allowed, forging_reason = self.cluster_mgr.should_allow_forging()
@@ -161,17 +161,21 @@ class TestClusterForgeManager(unittest.TestCase):
         allowed, reason = self.cluster_mgr.should_allow_local_leadership()
         self.assertTrue(allowed)
         self.assertIn("leadership_allowed_for_visibility", reason)
-        
-        # Forging decision should be separate - test lower priority 
+
+        # Forging decision should be separate - test lower priority
         # Note: Current implementation allows all priority-based clusters until cross-cluster coordination is implemented
         forging_allowed, forging_reason = self.cluster_mgr.should_allow_forging()
-        self.assertTrue(forging_allowed)  # Current implementation allows all priority-based clusters
+        self.assertTrue(
+            forging_allowed
+        )  # Current implementation allows all priority-based clusters
         self.assertIn("priority_based", forging_reason)
 
     def test_crd_creation(self):
         """Test CardanoForgeCluster CRD creation."""
         # Mock API calls
-        self.mock_api.get_namespaced_custom_object.side_effect = ApiException(status=404)
+        self.mock_api.get_namespaced_custom_object.side_effect = ApiException(
+            status=404
+        )
         self.mock_api.create_namespaced_custom_object.return_value = {
             "metadata": {"name": "test-cluster"}
         }
@@ -300,7 +304,7 @@ class TestClusterManagerIntegration(unittest.TestCase):
             result = cluster_manager.initialize_cluster_manager(self.mock_api)
 
             self.assertIsNotNone(result)
-            mock_class.assert_called_once_with(self.mock_api, '', '')
+            mock_class.assert_called_once_with(self.mock_api, "", "")
             mock_instance.start.assert_called_once()
 
         # Cleanup
@@ -801,7 +805,7 @@ class TestMultiTenantSupport(unittest.TestCase):
         allowed1, reason1 = pool1_mgr.should_allow_local_leadership()
         self.assertTrue(allowed1)
         self.assertIn("leadership_allowed_for_visibility", reason1)
-        
+
         # Pool 1 - forging should be allowed (enabled state)
         pool1_mgr._cluster_forge_enabled = True  # Simulate enabled state result
         forging1, reason1 = pool1_mgr.should_allow_forging()
@@ -811,7 +815,7 @@ class TestMultiTenantSupport(unittest.TestCase):
         allowed2, reason2 = pool2_mgr.should_allow_local_leadership()
         self.assertTrue(allowed2)
         self.assertIn("leadership_allowed_for_visibility", reason2)
-        
+
         # Pool 2 - forging should be disabled (disabled state)
         pool2_mgr._cluster_forge_enabled = False  # Simulate disabled state result
         forging2, reason2 = pool2_mgr.should_allow_forging()
@@ -860,13 +864,13 @@ class TestClusterScenarios(unittest.TestCase):
             # Leadership should always be allowed for visibility
             self.assertTrue(allowed)
             self.assertIn("leadership_allowed_for_visibility", reason)
-            
+
             # Forging decision is separate - simulate priority-based logic
             if cluster["priority"] <= 10:
                 mgr._cluster_forge_enabled = True  # High priority gets to forge
             else:
                 mgr._cluster_forge_enabled = False  # Lower priority doesn't forge
-                
+
             forging_allowed, forging_reason = mgr.should_allow_forging()
             if cluster["priority"] <= 10:
                 self.assertTrue(forging_allowed)
@@ -900,7 +904,7 @@ class TestClusterScenarios(unittest.TestCase):
         allowed, reason = mgr.should_allow_local_leadership()
         self.assertTrue(allowed)
         self.assertIn("leadership_allowed_for_visibility", reason)
-        
+
         # Forging should be allowed due to high priority (from override)
         mgr._cluster_forge_enabled = True  # Simulate override priority effect
         forging_allowed, forging_reason = mgr.should_allow_forging()
@@ -920,7 +924,7 @@ class TestClusterScenarios(unittest.TestCase):
         allowed, reason = mgr.should_allow_local_leadership()
         self.assertTrue(allowed)  # Leadership always allowed
         self.assertIn("leadership_allowed_for_visibility", reason)
-        
+
         # But forging should be disabled
         mgr._cluster_forge_enabled = False  # Simulate disabled state result
         forging_allowed, forging_reason = mgr.should_allow_forging()
