@@ -14,8 +14,6 @@ import random
 import shutil
 import signal
 import stat
-import sys
-import tempfile
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -24,7 +22,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from prometheus_client import Counter, Gauge, Info, start_http_server, generate_latest
+from prometheus_client import Counter, Gauge, Info, generate_latest
 
 # Cluster management (extension)
 import cluster_manager
@@ -81,7 +79,8 @@ APPLICATION_TYPE = os.environ.get("APPLICATION_TYPE", "block-producer")
 # -----------------------------
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - "
+    "[%(funcName)s:%(lineno)d] - %(message)s",
 )
 logger = logging.getLogger("cardano-forge-manager")
 
@@ -187,7 +186,8 @@ def discover_cardano_node_pid() -> Optional[int]:
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             if proc.info["name"] == CARDANO_NODE_PROCESS_NAME:
                 logger.debug(
-                    f"Found {CARDANO_NODE_PROCESS_NAME} process with PID {proc.info['pid']}"
+                    f"Found {CARDANO_NODE_PROCESS_NAME} process with PID "
+                    f"{proc.info['pid']}"
                 )
                 return proc.info["pid"]
             # Also check command line for cardano-node
@@ -195,13 +195,16 @@ def discover_cardano_node_pid() -> Optional[int]:
                 CARDANO_NODE_PROCESS_NAME in arg for arg in proc.info["cmdline"]
             ):
                 logger.debug(
-                    f"Found {CARDANO_NODE_PROCESS_NAME} in cmdline with PID {proc.info['pid']}"
+                    f"Found {CARDANO_NODE_PROCESS_NAME} in cmdline with PID "
+                    f"{proc.info['pid']}"
                 )
                 return proc.info["pid"]
 
-        # If not found, log this as debug (not error) since it's expected in multi-container setups
+        # If not found, log this as debug (not error) since it's expected
+        # in multi-container setups
         logger.debug(
-            f"Cannot find {CARDANO_NODE_PROCESS_NAME} process - likely in different container"
+            f"Cannot find {CARDANO_NODE_PROCESS_NAME} process - "
+            f"likely in different container"
         )
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
         logger.warning(f"Error discovering cardano-node process: {e}")
@@ -213,7 +216,8 @@ def discover_cardano_node_pid() -> Optional[int]:
 def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
     """Send SIGHUP signal to cardano-node process.
 
-    In multi-container setups, the cardano-node process is not visible to this container,
+    In multi-container setups, the cardano-node process is not visible to
+    this container,
     so SIGHUP signaling is not possible. Log this information but don't treat as error.
     """
     global cardano_node_pid
@@ -224,7 +228,8 @@ def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
 
     if cardano_node_pid is None:
         logger.info(
-            f"Cannot send SIGHUP to cardano-node (cross-container setup) - reason: {reason}"
+            f"Cannot send SIGHUP to cardano-node (cross-container setup) - "
+            f"reason: {reason}"
         )
         # In multi-container setups, we can't signal the process directly
         # The credential changes should still take effect when the node reads them
@@ -240,12 +245,14 @@ def send_sighup_to_cardano_node(reason: str = "credential_change") -> bool:
         return True
     except ProcessLookupError:
         logger.warning(
-            f"cardano-node process (PID {cardano_node_pid}) not found - refreshing PID cache"
+            f"cardano-node process (PID {cardano_node_pid}) not found - "
+            f"refreshing PID cache"
         )
         cardano_node_pid = None  # Clear cached PID
         # Retry once with cross-container assumption
         logger.info(
-            f"Assuming cross-container setup - credentials updated without SIGHUP - reason: {reason}"
+            f"Assuming cross-container setup - credentials updated without "
+            f"SIGHUP - reason: {reason}"
         )
         sighup_signals_total.labels(reason=f"{reason}_cross_container").inc()
         return True
@@ -294,7 +301,8 @@ def is_node_in_startup_phase() -> bool:
                     logger.debug(f"Cached cardano-node PID: {current_pid}")
                 else:
                     logger.info(
-                        "Running in cross-container mode - process signaling not available"
+                        "Running in cross-container mode - "
+                        "process signaling not available"
                     )
 
                 return False
@@ -375,7 +383,8 @@ def forfeit_leadership():
 
         if current_leader != POD_NAME:
             logger.info(
-                f"Not clearing CRD status - another pod ({current_leader or 'none'}) is now leader"
+                f"Not clearing CRD status - another pod "
+                f"({current_leader or 'none'}) is now leader"
             )
             # Update local metrics but don't touch CRD
             update_metrics(is_leader=False)
@@ -422,24 +431,28 @@ def forfeit_leadership():
 
 def update_leader_status(is_leader: bool):
     """Update CardanoLeader CRD status with current leadership and forging state.
-    
-    CRITICAL: If we hold the lease (is_leader=True), we MUST write our pod name to the CRD.
-    This ensures the CRD always reflects the current lease holder, regardless of previous state.
+
+    CRITICAL: If we hold the lease (is_leader=True), we MUST write our pod name
+    to the CRD.
+    This ensures the CRD always reflects the current lease holder, regardless
+    of previous state.
     Non-leaders should not overwrite the CRD unless they need to clear stale data.
     """
     # Get forging permission from cluster manager
     forging_allowed, forging_reason = cluster_manager.should_allow_forging()
     # Only forge if we're leader AND cluster allows forging
     forging_enabled = is_leader and forging_allowed
-    
+
     # If we're the leader, ALWAYS update CRD with our pod name
     # If we're not the leader, only update if we need to clear our own stale entry
     should_update = False
-    
+
     if is_leader:
         # ALWAYS update when we hold the lease - this is the source of truth
         should_update = True
-        logger.debug(f"Leader update: Writing {POD_NAME} to CRD (forging: {forging_enabled})")
+        logger.debug(
+            f"Leader update: Writing {POD_NAME} to CRD (forging: {forging_enabled})"
+        )
     else:
         # Non-leader: Check if CRD incorrectly shows us as leader and clear it
         try:
@@ -450,25 +463,30 @@ def update_leader_status(is_leader: bool):
                 plural=CRD_PLURAL,
                 name=CRD_NAME,
             )
-            live_status = current_crd.get("status", {}) if isinstance(current_crd, dict) else {}
+            live_status = (
+                current_crd.get("status", {}) if isinstance(current_crd, dict) else {}
+            )
             live_leader = live_status.get("leaderPod", "")
-            
+
             if live_leader == POD_NAME:
                 # CRD incorrectly shows us as leader - we must clear it
                 should_update = True
                 logger.info(f"Non-leader cleanup: Clearing stale {POD_NAME} from CRD")
             else:
                 # CRD doesn't show us as leader - no update needed
-                logger.debug(f"Non-leader: CRD shows {live_leader or 'none'} as leader, no update needed")
+                logger.debug(
+                    f"Non-leader: CRD shows {live_leader or 'none'} as leader, "
+                    f"no update needed"
+                )
         except ApiException as e:
             if e.status == 404:
                 logger.debug("CRD not found; non-leader skipping update")
             else:
                 logger.warning(f"Could not read CRD status as non-leader: {e}")
-    
+
     if not should_update:
         return
-    
+
     status_body = {
         "status": {
             "leaderPod": POD_NAME if is_leader else "",
@@ -485,9 +503,11 @@ def update_leader_status(is_leader: bool):
             name=CRD_NAME,
             body=status_body,
         )
-        
+
         logger.info(
-            f"CRD status updated: leader={POD_NAME if is_leader else 'none'}, forgingEnabled={forging_enabled} (cluster allows: {forging_allowed}, reason: {forging_reason})"
+            f"CRD status updated: leader={POD_NAME if is_leader else 'none'}, "
+            f"forgingEnabled={forging_enabled} (cluster allows: {forging_allowed}, "
+            f"reason: {forging_reason})"
         )
 
         # Also update cluster CRD if cluster management is enabled
@@ -505,7 +525,7 @@ def update_metrics(is_leader: bool):
     forging_allowed, forging_reason = cluster_manager.should_allow_forging()
     # Only forge if we're leader AND cluster allows forging
     forging_enabled_actual = is_leader and forging_allowed
-    
+
     # Use multi-tenant labels
     pool_id_short = POOL_ID[:10] if POOL_ID else "unknown"
     labels = {
@@ -541,7 +561,11 @@ def update_metrics(is_leader: bool):
             cluster_metrics.get("effective_priority", 999)
         )
 
-    logger.debug(f"Metrics updated: leader={is_leader}, forging={forging_enabled_actual} (cluster allows: {forging_allowed}, reason: {forging_reason})")
+    logger.debug(
+        f"Metrics updated: leader={is_leader}, "
+        f"forging={forging_enabled_actual} (cluster allows: {forging_allowed}, "
+        f"reason: {forging_reason})"
+    )
 
 
 def copy_secret(src: str, dest: str, file_type: str) -> bool:
@@ -619,7 +643,7 @@ def wait_for_socket(timeout: int = 0) -> bool:
 def ensure_secrets(is_leader: bool, send_sighup: bool = True) -> bool:
     """Ensure credential state matches forging permission."""
     credentials_changed = False
-    
+
     # Check if we should actually forge (leader + cluster allows forging)
     forging_allowed, forging_reason = cluster_manager.should_allow_forging()
     should_have_credentials = is_leader and forging_allowed
@@ -630,15 +654,23 @@ def ensure_secrets(is_leader: bool, send_sighup: bool = True) -> bool:
         (SOURCE_VRF_KEY, TARGET_VRF_KEY, "vrf"),
         (SOURCE_OP_CERT, TARGET_OP_CERT, "opcert"),
     ]
-    
+
     if should_have_credentials:
-        logger.info(f"Ensuring credentials are present for forging (leader: {is_leader}, cluster allows: {forging_allowed}, reason: {forging_reason})")
+        logger.info(
+            f"Ensuring credentials are present for forging "
+            f"(leader: {is_leader}, cluster allows: {forging_allowed}, "
+            f"reason: {forging_reason})"
+        )
         for src, dest, file_type in credential_files:
             if not os.path.exists(dest) or not files_identical(src, dest):
                 if copy_secret(src, dest, file_type):
                     credentials_changed = True
     else:
-        reason = "not leader" if not is_leader else f"cluster disallows forging ({forging_reason})"
+        reason = (
+            "not leader"
+            if not is_leader
+            else f"cluster disallows forging ({forging_reason})"
+        )
         logger.info(f"Ensuring credentials are absent ({reason})")
         for _, dest, file_type in credential_files:
             if os.path.exists(dest):
@@ -690,7 +722,8 @@ def startup_cleanup():
         holder = getattr(lease.spec, "holder_identity", "")
         if holder and holder != POD_NAME:
             logger.info(
-                f"Current lease holder is {holder}, cleaning up any orphaned credentials"
+                f"Current lease holder is {holder}, "
+                f"cleaning up any orphaned credentials"
             )
             cleanup_performed = ensure_secrets(is_leader=False, send_sighup=False)
             if cleanup_performed:
@@ -710,13 +743,16 @@ def startup_cleanup():
 # Utility Functions for Lease Stability
 # -----------------------------
 
-def calculate_jittered_sleep(base_interval: int, max_jitter_percent: float = 0.2) -> float:
+
+def calculate_jittered_sleep(
+    base_interval: int, max_jitter_percent: float = 0.2
+) -> float:
     """Calculate sleep interval with jitter to prevent synchronized wake-ups.
-    
+
     Args:
         base_interval: Base sleep interval in seconds
         max_jitter_percent: Maximum jitter as percentage of base interval (0.0-1.0)
-    
+
     Returns:
         Sleep interval with random jitter applied
     """
@@ -724,21 +760,25 @@ def calculate_jittered_sleep(base_interval: int, max_jitter_percent: float = 0.2
     jitter = random.uniform(-jitter_range, jitter_range)
     return max(1.0, base_interval + jitter)  # Ensure minimum 1 second
 
-def calculate_exponential_backoff(attempt: int, base_delay: float = 0.5, max_delay: float = 30.0) -> float:
+
+def calculate_exponential_backoff(
+    attempt: int, base_delay: float = 0.5, max_delay: float = 30.0
+) -> float:
     """Calculate exponential backoff delay for retry attempts.
-    
+
     Args:
         attempt: Retry attempt number (0-based)
         base_delay: Base delay in seconds
         max_delay: Maximum delay in seconds
-    
+
     Returns:
         Backoff delay with jitter
     """
-    delay = min(base_delay * (2 ** attempt), max_delay)
+    delay = min(base_delay * (2**attempt), max_delay)
     # Add jitter to prevent thundering herd
     jitter = random.uniform(0.1, 0.3) * delay
     return delay + jitter
+
 
 # -----------------------------
 # Lease Functions
@@ -819,7 +859,7 @@ def create_lease():
 def patch_lease(lease):
     """Update lease with current timestamp using optimistic concurrency control."""
     lease.spec.renew_time = datetime.now(timezone.utc).isoformat()
-    
+
     # Use resource version for optimistic concurrency control
     # This prevents race conditions when multiple pods try to update the same lease
     try:
@@ -827,8 +867,8 @@ def patch_lease(lease):
             name=LEASE_NAME, namespace=NAMESPACE, body=lease
         )
     except ApiException as e:
-        if e.status == 409:  # Conflict due to resource version mismatch
-            logger.debug(f"Lease patch conflict (409) - resource version changed")
+        if e.status == 409:  # Conflict - resource version mismatch
+            logger.debug("Lease patch conflict (409) - resource version changed")
             raise  # Let the caller handle the conflict
         else:
             logger.error(f"Unexpected error patching lease: {e}")
@@ -836,12 +876,17 @@ def patch_lease(lease):
 
 
 def try_acquire_leader() -> bool:
-    """Attempt to acquire leadership via lease mechanism with proper race condition handling."""
+    """Attempt to acquire leadership via lease mechanism with proper race
+    condition handling.
+    """
     global current_leadership_state
 
-    # Note: With the new design, leadership is always allowed for operational visibility.
-    # Forging permission is handled separately in ensure_secrets() and update_*() functions.
-    # This ensures the CRD is always kept up-to-date even when forging is disabled.
+    # Note: With the new design, leadership is always allowed for
+    # operational visibility.
+    # Forging permission is handled separately in ensure_secrets() and
+    # update_*() functions.
+    # This ensures the CRD is always kept up-to-date even when forging is
+    # disabled.
 
     max_retries = 3
     for attempt in range(max_retries):
@@ -881,7 +926,7 @@ def try_acquire_leader() -> bool:
             # Determine if we can/should acquire the lease
             can_acquire = False
             acquisition_reason = ""
-            
+
             if holder == POD_NAME:
                 can_acquire = True
                 acquisition_reason = "renewal"
@@ -896,19 +941,23 @@ def try_acquire_leader() -> bool:
                 old_holder = holder
                 lease.spec.holder_identity = POD_NAME
                 lease.spec.renew_time = now.isoformat()
-                
-                # Increment lease transitions when taking over from another holder
+
+                # Increment lease transitions when taking over from
+                # another holder
                 if old_holder != POD_NAME and old_holder != "":
                     current_transitions = getattr(lease.spec, "lease_transitions", 0)
                     lease.spec.lease_transitions = current_transitions + 1
 
                 try:
                     updated_lease = patch_lease(lease)
-                    
+
                     # Validate that we actually got the lease
                     final_holder = getattr(updated_lease.spec, "holder_identity", "")
                     if final_holder != POD_NAME:
-                        logger.warning(f"Lease patch succeeded but holder is {final_holder}, not {POD_NAME}")
+                        logger.warning(
+                            f"Lease patch succeeded but holder is {final_holder}, "
+                            f"not {POD_NAME}"
+                        )
                         if current_leadership_state:
                             current_leadership_state = False
                         return False
@@ -917,7 +966,9 @@ def try_acquire_leader() -> bool:
                     if old_holder != POD_NAME:
                         leadership_changes_total.inc()
                         logger.info(
-                            f"Leadership acquired by {POD_NAME} (previous: {old_holder or 'vacant'}, reason: {acquisition_reason})"
+                            f"Leadership acquired by {POD_NAME} "
+                            f"(previous: {old_holder or 'vacant'}, "
+                            f"reason: {acquisition_reason})"
                         )
                         current_leadership_state = True
                     else:
@@ -929,7 +980,10 @@ def try_acquire_leader() -> bool:
 
                 except ApiException as e:
                     if e.status == 409:  # Conflict - someone else got it
-                        logger.debug(f"Lease acquisition conflict (409) - attempt {attempt + 1}/{max_retries}")
+                        logger.debug(
+                            f"Lease acquisition conflict (409) - "
+                            f"attempt {attempt + 1}/{max_retries}"
+                        )
                         if attempt < max_retries - 1:
                             # Wait with exponential backoff before retrying
                             backoff_delay = calculate_exponential_backoff(attempt)
@@ -951,15 +1005,21 @@ def try_acquire_leader() -> bool:
 
             # If we reach here, we don't hold the lease
             final_result = holder == POD_NAME
-            
+
             # Validate consistency between lease holder and our state
             if final_result != current_leadership_state:
-                logger.debug(f"Leadership state inconsistency detected: holder={holder}, pod={POD_NAME}, current_state={current_leadership_state}")
+                logger.debug(
+                    f"Leadership state inconsistency detected: holder={holder}, "
+                    f"pod={POD_NAME}, current_state={current_leadership_state}"
+                )
                 # Update state to match reality
                 current_leadership_state = final_result
                 if not final_result and previous_leadership_state:
-                    logger.info(f"Leadership state corrected: we no longer hold the lease (holder: {holder})")
-            
+                    logger.info(
+                        f"Leadership state corrected: we no longer hold the lease "
+                        f"(holder: {holder})"
+                    )
+
             return final_result
 
         except Exception as e:
@@ -984,76 +1044,80 @@ def try_acquire_leader() -> bool:
 
 class ForgeManagerHTTPHandler(BaseHTTPRequestHandler):
     """Custom HTTP handler that serves both Prometheus metrics and startup status."""
-    
+
     def do_GET(self):
         """Handle GET requests for metrics and startup status."""
         parsed_path = urlparse(self.path)
         path = parsed_path.path
-        
+
         if path == "/metrics":
             # Serve Prometheus metrics
             try:
                 metrics_data = generate_latest()
                 self.send_response(200)
-                self.send_header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
+                self.send_header(
+                    "Content-Type", "text/plain; version=0.0.4; charset=utf-8"
+                )
                 self.end_headers()
                 self.wfile.write(metrics_data)
             except Exception as e:
                 logger.error(f"Error generating metrics: {e}")
                 self.send_response(500)
-                self.send_header('Content-Type', 'text/plain')
+                self.send_header("Content-Type", "text/plain")
                 self.end_headers()
-                self.wfile.write(b'Error generating metrics')
-        
+                self.wfile.write(b"Error generating metrics")
+
         elif path == "/startup-status":
             # Serve startup status for startupProbe
             try:
                 is_ready = check_startup_credentials_ready()
                 if is_ready:
                     self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
+                    self.send_header("Content-Type", "application/json")
                     self.end_headers()
                     response = {
                         "status": "ready",
                         "message": "Startup credentials provisioned successfully",
                         "credentials_provisioned": startup_credentials_provisioned,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                     import json
+
                     self.wfile.write(json.dumps(response).encode())
                 else:
                     self.send_response(503)  # Service Unavailable
-                    self.send_header('Content-Type', 'application/json')
+                    self.send_header("Content-Type", "application/json")
                     self.end_headers()
                     response = {
                         "status": "not_ready",
                         "message": "Startup credentials not yet provisioned",
                         "credentials_provisioned": startup_credentials_provisioned,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                     import json
+
                     self.wfile.write(json.dumps(response).encode())
             except Exception as e:
                 logger.error(f"Error checking startup status: {e}")
                 self.send_response(500)
-                self.send_header('Content-Type', 'text/plain')
+                self.send_header("Content-Type", "text/plain")
                 self.end_headers()
-                self.wfile.write(b'Error checking startup status')
-        
+                self.wfile.write(b"Error checking startup status")
+
         elif path == "/health":
             # Simple health check endpoint
             self.send_response(200)
-            self.send_header('Content-Type', 'text/plain')
+            self.send_header("Content-Type", "text/plain")
             self.end_headers()
-            self.wfile.write(b'OK')
-        
+            self.wfile.write(b"OK")
+
         else:
             # 404 for unknown paths
             self.send_response(404)
-            self.send_header('Content-Type', 'text/plain')
+            self.send_header("Content-Type", "text/plain")
             self.end_headers()
-            self.wfile.write(b'Not Found')
-    
+            self.wfile.write(b"Not Found")
+
     def log_message(self, format, *args):
         """Override to use our logger instead of stderr."""
         logger.debug(f"HTTP: {format % args}")
@@ -1061,35 +1125,35 @@ class ForgeManagerHTTPHandler(BaseHTTPRequestHandler):
 
 def check_startup_credentials_ready() -> bool:
     """Check if startup credentials are ready for cardano-node.
-    
+
     Returns True if:
     1. startup_credentials_provisioned flag is True, OR
     2. All required credential files exist at their target locations
     """
-    global startup_credentials_provisioned
-    
     # If the flag is set, we're ready
     if startup_credentials_provisioned:
         return True
-    
+
     # Check if all required credential files exist
     required_files = [TARGET_KES_KEY, TARGET_VRF_KEY, TARGET_OP_CERT]
-    
+
     try:
         for file_path in required_files:
             if not os.path.exists(file_path):
-                logger.debug(f"Startup credential not ready: {file_path} does not exist")
+                logger.debug(
+                    f"Startup credential not ready: {file_path} does not exist"
+                )
                 return False
-            
+
             # Check that the file is readable and not empty
             stat_info = os.stat(file_path)
             if stat_info.st_size == 0:
                 logger.debug(f"Startup credential not ready: {file_path} is empty")
                 return False
-        
+
         logger.debug("All startup credentials are present and non-empty")
         return True
-        
+
     except Exception as e:
         logger.debug(f"Error checking startup credentials: {e}")
         return False
@@ -1097,18 +1161,22 @@ def check_startup_credentials_ready() -> bool:
 
 def start_metrics_server():
     """Start HTTP server for both Prometheus metrics and startup status."""
+
     def run_server():
         try:
-            server = HTTPServer(('0.0.0.0', METRICS_PORT), ForgeManagerHTTPHandler)
-            logger.info(f"HTTP server started on port {METRICS_PORT} (metrics: /metrics, startup: /startup-status)")
+            server = HTTPServer(("0.0.0.0", METRICS_PORT), ForgeManagerHTTPHandler)
+            logger.info(
+                f"HTTP server started on port {METRICS_PORT} "
+                f"(metrics: /metrics, startup: /startup-status)"
+            )
             server.serve_forever()
         except Exception as e:
             logger.error(f"HTTP server error: {e}")
-    
+
     # Start server in background thread
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
-    
+
     # Give server a moment to start
     time.sleep(0.5)
 
@@ -1160,7 +1228,8 @@ def main():
                     logger.debug(
                         "Node in startup phase - maintaining startup credentials"
                     )
-                    # During startup, ensure credentials exist but don't do leader election
+                    # During startup, ensure credentials exist but don't do
+                    # leader election
                     if not startup_credentials_provisioned:
                         provision_startup_credentials()
 
@@ -1185,7 +1254,6 @@ def main():
 
                 # Try to acquire leadership
                 logger.debug("Attempting to acquire leadership...")
-                previous_leadership_state = current_leadership_state  # Track previous state
                 is_leader = try_acquire_leader()
                 logger.debug(f"Leadership acquisition result: {is_leader}")
 
@@ -1194,7 +1262,8 @@ def main():
                 credentials_changed = ensure_secrets(is_leader)
                 if credentials_changed:
                     logger.info(
-                        f"Credentials {'provisioned' if is_leader else 'removed'} for leadership status"
+                        f"Credentials {'provisioned' if is_leader else 'removed'} "
+                        f"for leadership status"
                     )
 
                 # Update status and metrics
@@ -1202,9 +1271,13 @@ def main():
                 update_leader_status(is_leader)
                 update_metrics(is_leader)
 
-                # Sleep until next iteration with jitter to prevent synchronized wake-ups
+                # Sleep until next iteration with jitter to prevent
+                # synchronized wake-ups
                 jittered_sleep = calculate_jittered_sleep(SLEEP_INTERVAL)
-                logger.debug(f"Sleeping for {jittered_sleep:.2f}s (base: {SLEEP_INTERVAL}s + jitter)")
+                logger.debug(
+                    f"Sleeping for {jittered_sleep:.2f}s "
+                    f"(base: {SLEEP_INTERVAL}s + jitter)"
+                )
                 time.sleep(jittered_sleep)
 
             except KeyboardInterrupt:

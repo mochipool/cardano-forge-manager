@@ -145,7 +145,12 @@ def validate_multi_tenant_config() -> Tuple[bool, str]:
 class ClusterForgeManager:
     """Manages cluster-wide forge state using CardanoForgeCluster CRD."""
 
-    def __init__(self, custom_objects_api: client.CustomObjectsApi, pod_name: str = "", namespace: str = ""):
+    def __init__(
+        self,
+        custom_objects_api: client.CustomObjectsApi,
+        pod_name: str = "",
+        namespace: str = "",
+    ):
         self.api = custom_objects_api
         self._pod_name = pod_name or os.environ.get("POD_NAME", "")
         self._namespace = namespace or os.environ.get("NAMESPACE", "default")
@@ -234,11 +239,11 @@ class ClusterForgeManager:
     def should_allow_local_leadership(self) -> Tuple[bool, str]:
         """
         Determine if local leadership election should be allowed.
-        
+
         IMPORTANT: This method determines whether a pod can become the leader
         for operational visibility and CRD management. It should almost always
         return True to ensure proper reconciliation and status updates.
-        
+
         The actual forging decision is handled separately via should_allow_forging().
 
         Returns:
@@ -255,19 +260,25 @@ class ClusterForgeManager:
             spec = self._current_cluster_crd.get("spec", {})
             forge_state = spec.get("forgeState", "Priority-based")
             base_priority = spec.get("priority", self.priority)
-            
+
             # Calculate effective state using the same logic as status updates
-            effective_state, effective_priority, calc_reason, calc_message = self._calculate_effective_state_and_priority(
-                forge_state, base_priority
+            effective_state, effective_priority, calc_reason, calc_message = (
+                self._calculate_effective_state_and_priority(forge_state, base_priority)
             )
-            
+
             # Update internal state tracking
             self._effective_priority = effective_priority
-            self._cluster_forge_enabled = effective_state in ("Enabled", "Priority-based")
+            self._cluster_forge_enabled = effective_state in (
+                "Enabled",
+                "Priority-based",
+            )
 
             # ALWAYS allow leadership for operational visibility and CRD updates
             # The actual forging decision is made separately in should_allow_forging()
-            return True, f"leadership_allowed_for_visibility_effective_state_{effective_state.lower()}"
+            return (
+                True,
+                f"leadership_allowed_for_visibility_effective_state_{effective_state.lower()}",
+            )
 
         except Exception as e:
             logger.error(f"Error evaluating cluster leadership: {e}")
@@ -276,10 +287,10 @@ class ClusterForgeManager:
     def should_allow_forging(self) -> Tuple[bool, str]:
         """
         Determine if forging should be enabled for the current leader.
-        
+
         This method evaluates the cluster-wide forging policy and returns
         whether the current leader should actually forge blocks.
-        
+
         Returns:
             Tuple[bool, str]: (forging_allowed, reason)
         """
@@ -294,10 +305,10 @@ class ClusterForgeManager:
             spec = self._current_cluster_crd.get("spec", {})
             forge_state = spec.get("forgeState", "Priority-based")
             base_priority = spec.get("priority", self.priority)
-            
+
             # Calculate effective state using the same logic as status updates
-            effective_state, effective_priority, calc_reason, calc_message = self._calculate_effective_state_and_priority(
-                forge_state, base_priority
+            effective_state, effective_priority, calc_reason, calc_message = (
+                self._calculate_effective_state_and_priority(forge_state, base_priority)
             )
 
             if effective_state == "Disabled":
@@ -486,11 +497,11 @@ class ClusterForgeManager:
 
         try:
             self._current_cluster_crd = self.api.create_namespaced_custom_object(
-                group=CRD_GROUP, 
-                version=CRD_VERSION, 
+                group=CRD_GROUP,
+                version=CRD_VERSION,
                 namespace=self._namespace,
-                plural=CRD_PLURAL, 
-                body=crd_body
+                plural=CRD_PLURAL,
+                body=crd_body,
             )
             logger.info(f"Created CardanoForgeCluster CRD: {self.cluster_id}")
 
@@ -548,19 +559,19 @@ class ClusterForgeManager:
 
             spec = crd_obj.get("spec", {})
             old_spec = old_crd.get("spec", {}) if old_crd else {}
-            
+
             # Check if spec has changed to determine if we need a status update
             spec_changed = (
-                spec.get("forgeState") != old_spec.get("forgeState") or
-                spec.get("priority") != old_spec.get("priority") or
-                spec.get("override", {}) != old_spec.get("override", {})
+                spec.get("forgeState") != old_spec.get("forgeState")
+                or spec.get("priority") != old_spec.get("priority")
+                or spec.get("override", {}) != old_spec.get("override", {})
             )
-            
+
             # Calculate current effective state
             forge_state = spec.get("forgeState", "Priority-based")
             base_priority = spec.get("priority", self.priority)
-            effective_state, effective_priority, _, _ = self._calculate_effective_state_and_priority(
-                forge_state, base_priority
+            effective_state, effective_priority, _, _ = (
+                self._calculate_effective_state_and_priority(forge_state, base_priority)
             )
 
             # Update local state
@@ -670,7 +681,9 @@ class ClusterForgeManager:
         except Exception as e:
             logger.warning(f"Failed to update health status: {e}")
 
-    def _build_comprehensive_status_update(self, pod_name: Optional[str], is_leader: bool) -> Dict[str, Any]:
+    def _build_comprehensive_status_update(
+        self, pod_name: Optional[str], is_leader: bool
+    ) -> Dict[str, Any]:
         """Build comprehensive status update including all required CRD status fields."""
         if not self._current_cluster_crd:
             return {"status": {}}
@@ -678,50 +691,54 @@ class ClusterForgeManager:
         try:
             spec = self._current_cluster_crd.get("spec", {})
             current_status = self._current_cluster_crd.get("status", {})
-            
+
             # Get base configuration
             forge_state = spec.get("forgeState", "Priority-based")
             base_priority = spec.get("priority", self.priority)
-            
+
             # Calculate effective state and priority based on current conditions
-            effective_state, effective_priority, reason, message = self._calculate_effective_state_and_priority(
-                forge_state, base_priority
+            effective_state, effective_priority, reason, message = (
+                self._calculate_effective_state_and_priority(forge_state, base_priority)
             )
-            
+
             # Build comprehensive status update
             now_iso = datetime.now(timezone.utc).isoformat()
-            
+
             status_update = {
                 "status": {
                     # Leadership information
                     "activeLeader": pod_name if is_leader else "",
-                    "forgingEnabled": is_leader and effective_state in ("Enabled", "Priority-based"),
-                    
+                    "forgingEnabled": is_leader
+                    and effective_state in ("Enabled", "Priority-based"),
                     # Effective state computation
                     "effectiveState": effective_state,
                     "effectivePriority": effective_priority,
                     "reason": reason,
                     "message": message,
-                    
                     # Timestamps
                     "lastTransition": now_iso,
-                    
                     # Preserve existing generation if available
-                    "observedGeneration": spec.get("generation", current_status.get("observedGeneration", 1)),
+                    "observedGeneration": spec.get(
+                        "generation", current_status.get("observedGeneration", 1)
+                    ),
                 }
             }
-            
+
             # Include health status if we have health check data
-            if hasattr(self, '_last_health_check') and self._last_health_check:
+            if hasattr(self, "_last_health_check") and self._last_health_check:
                 status_update["status"]["healthStatus"] = {
                     "healthy": self._consecutive_health_failures == 0,
                     "lastProbeTime": self._last_health_check.isoformat(),
                     "consecutiveFailures": self._consecutive_health_failures,
-                    "message": f"Health checks: {self._consecutive_health_failures} consecutive failures" if self._consecutive_health_failures > 0 else "All health checks passing"
+                    "message": (
+                        f"Health checks: {self._consecutive_health_failures} consecutive failures"
+                        if self._consecutive_health_failures > 0
+                        else "All health checks passing"
+                    ),
                 }
-            
+
             return status_update
-            
+
         except Exception as e:
             logger.error(f"Error building comprehensive status update: {e}")
             # Fallback to minimal update
@@ -729,13 +746,15 @@ class ClusterForgeManager:
                 "status": {
                     "activeLeader": pod_name if is_leader else "",
                     "lastTransition": datetime.now(timezone.utc).isoformat(),
-                    "message": f"Error calculating status: {e}"
+                    "message": f"Error calculating status: {e}",
                 }
             }
-    
-    def _calculate_effective_state_and_priority(self, forge_state: str, base_priority: int) -> tuple[str, int, str, str]:
+
+    def _calculate_effective_state_and_priority(
+        self, forge_state: str, base_priority: int
+    ) -> tuple[str, int, str, str]:
         """Calculate effective state and priority based on current conditions.
-        
+
         Returns:
             tuple: (effective_state, effective_priority, reason, message)
         """
@@ -745,40 +764,55 @@ class ClusterForgeManager:
             effective_priority = base_priority
             reason = "base_configuration"
             message = f"Using base configuration: state={forge_state}, priority={base_priority}"
-            
+
             # Check for manual overrides first (highest precedence)
             if self._current_cluster_crd:
                 spec = self._current_cluster_crd.get("spec", {})
                 override_config = spec.get("override", {})
-                
+
                 if override_config.get("enabled", False):
                     # Check if override has expired
                     expires_at = override_config.get("expiresAt")
                     if expires_at:
                         try:
-                            expire_time = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                            expire_time = datetime.fromisoformat(
+                                expires_at.replace("Z", "+00:00")
+                            )
                             if datetime.now(timezone.utc) > expire_time:
-                                logger.info(f"Override expired at {expires_at}, reverting to normal operation")
+                                logger.info(
+                                    f"Override expired at {expires_at}, reverting to normal operation"
+                                )
                             else:
                                 # Override is active
                                 if "forceState" in override_config:
                                     effective_state = override_config["forceState"]
                                     reason = "manual_override"
                                     message = f"Manual override active: {override_config.get('reason', 'No reason specified')}"
-                                
+
                                 if "forcePriority" in override_config:
-                                    effective_priority = override_config["forcePriority"]
+                                    effective_priority = override_config[
+                                        "forcePriority"
+                                    ]
                                     reason = "manual_override"
-                                    
-                                logger.debug(f"Active override: state={effective_state}, priority={effective_priority}")
-                                return effective_state, effective_priority, reason, message
+
+                                logger.debug(
+                                    f"Active override: state={effective_state}, priority={effective_priority}"
+                                )
+                                return (
+                                    effective_state,
+                                    effective_priority,
+                                    reason,
+                                    message,
+                                )
                         except Exception as e:
                             logger.warning(f"Error processing override expiration: {e}")
-                
+
             # Apply health-based adjustments (if no override)
-            if effective_state == "Priority-based" and hasattr(self, '_consecutive_health_failures'):
+            if effective_state == "Priority-based" and hasattr(
+                self, "_consecutive_health_failures"
+            ):
                 health_threshold = 3  # Default failure threshold
-                
+
                 if self._consecutive_health_failures >= health_threshold:
                     # Apply health penalty
                     health_penalty = 100
@@ -795,21 +829,30 @@ class ClusterForgeManager:
                 else:
                     reason = "healthy_operation"
                     message = f"Healthy operation: state={effective_state}, priority={effective_priority}"
-            
+
             # For disabled state, provide clear reasoning
             if effective_state == "Disabled":
                 reason = "cluster_disabled"
-                message = "Cluster forging explicitly disabled via spec.forgeState=Disabled"
+                message = (
+                    "Cluster forging explicitly disabled via spec.forgeState=Disabled"
+                )
             elif effective_state == "Enabled":
                 reason = "cluster_enabled"
-                message = "Cluster forging explicitly enabled via spec.forgeState=Enabled"
-            
+                message = (
+                    "Cluster forging explicitly enabled via spec.forgeState=Enabled"
+                )
+
             return effective_state, effective_priority, reason, message
-            
+
         except Exception as e:
             logger.error(f"Error calculating effective state: {e}")
-            return forge_state, base_priority, "calculation_error", f"Error calculating effective state: {e}"
-    
+            return (
+                forge_state,
+                base_priority,
+                "calculation_error",
+                f"Error calculating effective state: {e}",
+            )
+
     def update_comprehensive_status(self):
         """Update CRD with comprehensive status including effectiveState and effectivePriority."""
         if not self.enabled or not self._current_cluster_crd:
@@ -820,9 +863,11 @@ class ClusterForgeManager:
             current_status = self._current_cluster_crd.get("status", {})
             current_leader = current_status.get("activeLeader", "")
             is_leader = current_leader == self._pod_name
-            
+
             # Build and apply comprehensive status update
-            status_patch = self._build_comprehensive_status_update(current_leader, is_leader)
+            status_patch = self._build_comprehensive_status_update(
+                current_leader, is_leader
+            )
 
             self.api.patch_namespaced_custom_object_status(
                 group=CRD_GROUP,
@@ -883,7 +928,7 @@ def should_allow_local_leadership() -> Tuple[bool, str]:
 def should_allow_forging() -> Tuple[bool, str]:
     """
     Check if forging should be enabled based on cluster-wide policy.
-    
+
     This is separate from leadership election - a pod can be the leader
     but have forging disabled based on cluster policy.
 
