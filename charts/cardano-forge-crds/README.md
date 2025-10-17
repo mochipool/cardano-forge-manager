@@ -19,9 +19,13 @@ The Cardano Forge Manager CRDs provide:
 
 ```bash
 # Install CRDs with default configuration
-helm install cardano-forge-crds ./charts/cardano-forge-crds
+helm install cardano-forge-crds ./charts/cardano-forge-crds \
+  --namespace cardano-system \
+  --create-namespace
+```
 
-# Install with custom values
+```bash
+# Install with custom values (only useful for testing, use defaults otherwise)
 helm install cardano-forge-crds ./charts/cardano-forge-crds -f custom-values.yaml
 ```
 
