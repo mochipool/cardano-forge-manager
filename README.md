@@ -1,6 +1,5 @@
-# 🚀 Cardano Forge Manager
-
 <div align="center">
+# 🚀 Cardano Forge Manager
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build Status](https://github.com/mochipool/cardano-forge-manager/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/mochipool/cardano-forge-manager/actions/workflows/build.yml)
@@ -604,9 +603,12 @@ python src/forgemanager.py
 ## 📚 Documentation
 
 - **[Architecture Documentation](docs/ARCHITECTURE.md)** - Technical architecture and implementation details
+- **[Technical Requirements](docs/TECHNICAL_REQUIREMENTS.md)** - Comprehensive requirements specification and edge cases
+- **[Functional Requirements](docs/FUNCTIONAL_REQUIREMENTS.md)** - Multi-tenant functional requirements
 - **[Operations Guide](docs/OPERATIONS.md)** - Deployment and operational procedures
+- **[Implementation Notes](docs/IMPLEMENTATION_NOTES.md)** - Technical implementation details
+- **[System Design](docs/SYSTEM_DESIGN.md)** - System design, testing, and validation
 - **[Helm Chart Documentation](charts/cardano-forge-crds/README.md)** - CRD installation and configuration
-- **[Validation Criteria](charts/cardano-forge-crds/VALIDATION_CRITERIA.md)** - Testing and validation requirements
 
 ## 🤝 Contributing
 
