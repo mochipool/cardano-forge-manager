@@ -66,7 +66,6 @@ spec:
               # Create data directories
               mkdir -p {{ .Values.cardanoNode.dataDir }}/db
               mkdir -p /ipc
-              mkdir -p /opt/cardano/secrets
               mkdir -p /config/genesis
               
               # Note: emptyDir volumes are already writable, no need to chmod
@@ -124,8 +123,6 @@ spec:
               mountPath: /config
             - name: socket-dir
               mountPath: /ipc
-            - name: cardano-secrets-target
-              mountPath: /opt/cardano/secrets
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
         
