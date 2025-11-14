@@ -8,14 +8,24 @@ on:
       - 'src/**'
       - 'Dockerfile'
       - 'requirements.txt'
-      - '.github/workflows/**'
+      - '.github/workflows/build.yml'
+      - '.github/workflows/build-simple.yml'
+    paths-ignore:
+      - 'charts/**'
+      - 'docs/**'
+      - '**.md'
   pull_request:
     branches: [ main ]
     paths:
       - 'src/**'
       - 'Dockerfile'
       - 'requirements.txt'
-      - '.github/workflows/**'
+      - '.github/workflows/build.yml'
+      - '.github/workflows/build-simple.yml'
+    paths-ignore:
+      - 'charts/**'
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
     inputs:
       push_to_registry:
@@ -112,8 +122,8 @@ jobs:
             echo "Changed files:"
             echo "$CHANGED_FILES"
             
-            # Check if any functional files changed
-            FUNCTIONAL_CHANGES=$(echo "$CHANGED_FILES" | grep -E '^(src/|Dockerfile|requirements\.txt|\.github/workflows/)' || true)
+            # Check if any functional files changed (excluding charts, docs, and markdown)
+            FUNCTIONAL_CHANGES=$(echo "$CHANGED_FILES" | grep -E '^(src/|Dockerfile|requirements\.txt|\.github/workflows/(build\.yml|build-simple\.yml))' | grep -v -E '^(charts/|docs/|.*\.md$)' || true)
             
             if [ -z "$FUNCTIONAL_CHANGES" ]; then
               echo "should-build=false" >> $GITHUB_OUTPUT

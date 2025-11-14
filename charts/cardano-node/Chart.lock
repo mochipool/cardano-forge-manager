@@ -1,6 +1,0 @@
-dependencies:
-- name: cardano-forge-crds
-  repository: file://../cardano-forge-crds
-  version: 2.0.0
-digest: sha256:70bc0cec8b38d1ab5e7c4702f9d96ea04ecef93d47197b5f4e678fb000fd526f
-generated: "2025-10-02T23:29:02.232594898Z"

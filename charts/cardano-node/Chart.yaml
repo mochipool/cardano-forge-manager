@@ -34,15 +34,6 @@ maintainers:
   - name: Cardano Forge Manager Team
     email: devops@example.com
 
-# Chart dependencies
-dependencies:
-  - name: cardano-forge-crds
-    version: "2.0.0"
-    repository: "file://../cardano-forge-crds"
-    condition: cardano-forge-crds.enabled
-    tags:
-      - crds
-
 # Minimum Kubernetes version
 kubeVersion: ">=1.25.0"
 
