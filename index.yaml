@@ -1,0 +1,120 @@
+apiVersion: v1
+entries:
+  cardano-forge-crds:
+  - annotations:
+      artifacthub.io/changes: "- kind: added\n  description: CardanoForgeCluster CRD
+        for cluster-wide forge management\n- kind: added\n  description: CardanoLeader
+        CRD for local leader election within a cluster\n- kind: added  \n  description:
+        Multi-tenant support with network and pool identification\n- kind: added\n
+        \ description: Health check integration for automatic failover\n- kind: added\n
+        \ description: Priority-based cluster coordination\n"
+      artifacthub.io/crds: |
+        - kind: CardanoLeader
+          version: v1
+          name: cardanoleaders.cardano.io
+          displayName: Cardano Leader
+          description: Tracks local leader election state within a single Kubernetes cluster
+        - kind: CardanoForgeCluster
+          version: v1
+          name: cardanoforgeclusters.cardano.io
+          displayName: Cardano Forge Cluster
+          description: Manages cluster-wide forge state and coordination for Cardano block producers
+      artifacthub.io/crdsExamples: |-
+        - apiVersion: cardano.io/v1
+          kind: CardanoForgeCluster
+          metadata:
+            name: mainnet-pool1abc-us-east-1
+          spec:
+            network:
+              name: mainnet
+              magic: 764824073
+            pool:
+              id: pool1abcd1234567890abcd1234567890abcd1234567890abcd1234
+              idHex: "a1b2c3d4e5f6789012345678901234567890123456789012345678901234"
+              name: "My Cardano Pool"
+              ticker: "POOL"
+            forgeState: Priority-based
+            priority: 1
+            region: us-east-1
+      category: Blockchain
+      licenses: MIT
+    apiVersion: v2
+    appVersion: 2.0.0
+    created: "2025-11-14T19:23:20.776695617Z"
+    description: Custom Resource Definitions for Cardano Forge Manager cluster-wide
+      forging
+    digest: ae68af6a1f5769a431e83c5cbb77965112df517206b2a74f1be3d1d8f064a512
+    home: https://github.com/mochipool/cardano-forge-manager
+    keywords:
+    - cardano
+    - blockchain
+    - kubernetes
+    - forging
+    - crds
+    maintainers:
+    - email: support@example.com
+      name: Cardano Forge Manager Team
+    name: cardano-forge-crds
+    sources:
+    - https://github.com/mochipool/cardano-forge-manager
+    type: application
+    urls:
+    - cardano-forge-crds-2.0.0.tgz
+    version: 2.0.0
+  cardano-node:
+  - annotations:
+      artifacthub.io/changes: |
+        - kind: added
+          description: Multi-cluster coordination with CardanoForgeCluster CRD
+        - kind: added
+          description: Multi-tenant support for multiple pools per cluster
+        - kind: added
+          description: Health-based automatic failover
+        - kind: changed
+          description: Updated to Forge Manager v2.0 with cluster awareness
+        - kind: changed
+          description: Enhanced RBAC for CRD management
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/mochipool/cardano-forge-manager/tree/main/docs
+        - name: Support
+          url: https://github.com/mochipool/cardano-forge-manager/issues
+      artifacthub.io/operator: "false"
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2025-11-14T19:23:20.933793243Z"
+    description: 'Cardano Node Helm Chart with Cluster-Aware Dynamic Block Production  Features:
+      - Multi-cluster coordination with priority-based forge management - Multi-tenant
+      support for running multiple pools in the same cluster - Health-based automatic
+      failover - Optional Mithril Signer and Submit API sidecars - Full observability
+      with Prometheus metrics '
+    digest: 2e3dd28d14875ea84907f0403e26eb68c8d89972898642937b61e017980abd9d
+    home: https://github.com/mochipool/cardano-forge-manager
+    keywords:
+    - cardano
+    - blockchain
+    - block-producer
+    - stake-pool
+    - mithril
+    - forge-manager
+    - high-availability
+    - multi-cluster
+    kubeVersion: '>=1.25.0'
+    maintainers:
+    - email: devops@example.com
+      name: Cardano Forge Manager Team
+    name: cardano-node
+    sources:
+    - https://github.com/IntersectMBO/cardano-node
+    - https://github.com/mochipool/cardano-forge-manager
+    - https://github.com/input-output-hk/mithril
+    type: application
+    urls:
+    - cardano-node-2.0.0.tgz
+    version: 2.0.0
+generated: "2025-11-14T19:23:20.933819753Z"
