@@ -2,7 +2,7 @@ apiVersion: v2
 name: cardano-forge-crds
 description: Custom Resource Definitions for Cardano Forge Manager cluster-wide forging
 type: application
-version: 0.1.9
+version: 0.1.9-hotfix
 appVersion: "10.5.1"
 keywords:
   - cardano
