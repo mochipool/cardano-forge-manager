@@ -243,13 +243,16 @@ Common annotations
 {{- end }}
 
 {{/*
-PVC name - either existing claim or generated name
+PVC name - either existing claim or generated name.
+Takes a parameter: "ledger" or "socket"
 */}}
 {{- define "cardano-node.pvcName" -}}
-{{- if .Values.persistence.existingClaim -}}
-{{- .Values.persistence.existingClaim -}}
+{{- $which := . -}}  {{/* parameter: "ledger" or "socket" */}}
+{{- $p := index .Values.persistence $which -}}
+{{- if $p.existingClaim -}}
+{{- $p.existingClaim -}}
 {{- else -}}
-{{- printf "%s-data" (include "cardano-node.fullname" .) -}}
+{{- printf "%s-%s" (include "cardano-node.fullname" $) $which -}}
 {{- end -}}
 {{- end }}
 
@@ -301,5 +304,79 @@ name: {{ .Values.forgeManager.multiTenant.pool.name | quote }}
 {{- end }}
 {{- if .Values.forgeManager.multiTenant.pool.ticker }}
 ticker: {{ .Values.forgeManager.multiTenant.pool.ticker | quote }}
+{{- end }}
+{{- end }}
+{{/*
+Return "true" if either ledger or socket PVC template should be created.
+Used to decide whether to emit the volumeClaimTemplates: root key.
+*/}}
+{{- define "cardano-node.requiresPVCs" -}}
+{{- $ledger := .Values.persistence.ledger -}}
+{{- $socket := .Values.persistence.socket -}}
+
+{{- $needLedger := and $ledger.enabled (not $ledger.existingClaim) -}}
+{{- $needSocket := and $socket.enabled (not $socket.existingClaim) -}}
+
+{{- if or $needLedger $needSocket }}true{{ else }}false{{ end }}
+{{- end }}
+
+{{/*
+Generate the list items for volumeClaimTemplates.
+This helper does NOT emit the volumeClaimTemplates: key itself.
+Indentation is controlled by callers via nindent.
+*/}}
+{{- define "cardano-node.volumeClaimTemplates" -}}
+{{- $ledger := .Values.persistence.ledger -}}
+{{- $socket := .Values.persistence.socket -}}
+
+{{- $needLedger := and $ledger.enabled (not $ledger.existingClaim) -}}
+{{- $needSocket := and $socket.enabled (not $socket.existingClaim) -}}
+
+{{- if $needLedger }}
+- metadata:
+    name: cardano-data
+    labels:
+      {{- include "cardano-node.labels" . | nindent 6 }}
+    {{- with $ledger.annotations }}
+    annotations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  spec:
+    accessModes:
+      - {{ $ledger.accessMode | quote }}
+    {{- if $ledger.storageClass }}
+    {{- if (eq "-" $ledger.storageClass) }}
+    storageClassName: ""
+    {{- else }}
+    storageClassName: {{ $ledger.storageClass | quote }}
+    {{- end }}
+    {{- end }}
+    resources:
+      requests:
+        storage: {{ $ledger.size | quote }}
+{{- end }}
+
+{{- if $needSocket }}
+- metadata:
+    name: socket-dir
+    labels:
+      {{- include "cardano-node.labels" . | nindent 6 }}
+    {{- with $socket.annotations }}
+    annotations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  spec:
+    accessModes:
+      - {{ $socket.accessMode | quote }}
+    {{- if $socket.storageClass }}
+    {{- if (eq "-" $socket.storageClass) }}
+    storageClassName: ""
+    {{- else }}
+    storageClassName: {{ $socket.storageClass | quote }}
+    {{- end }}
+    {{- end }}
+    resources:
+      requests:
+        storage: {{ $socket.size | quote }}
 {{- end }}
 {{- end }}

@@ -4,12 +4,6 @@ on:
   push:
     branches: [ main, develop ]
     tags: [ 'v*' ]
-    paths:
-      - 'src/**'
-      - 'Dockerfile'
-      - 'requirements.txt'
-      - '.github/workflows/build.yml'
-      - '.github/workflows/build-simple.yml'
     paths-ignore:
       - 'charts/**'
       - 'docs/**'

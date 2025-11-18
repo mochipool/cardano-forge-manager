@@ -1,6 +1,7 @@
 # Mainnet Relay Node - Production Ready Example
 # This is a complete, production-ready relay configuration for Cardano Mainnet
 # Optimized for high availability and performance
+# Socket can be shared by created PVC
 
 # ===========================================
 # BASIC CONFIGURATION
@@ -66,7 +67,7 @@ persistence:
     size: 400Gi  # Mainnet requires substantial storage
     # storageClass: "fast-ssd"  # Use high-performance storage class
   socket:
-    enabled: false
+    enabled: true
 
 # ===========================================
 # RESOURCE CONFIGURATION (Production)

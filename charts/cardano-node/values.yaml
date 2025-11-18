@@ -399,14 +399,27 @@ submitApi:
 # STORAGE CONFIGURATION
 # ===========================================
 persistence:
-  enabled: true
-  storageClass: ""  # Use default storage class if empty
-  accessMode: ReadWriteOnce
-  size: 200Gi  # Increase for mainnet (400Gi+ recommended)
-  annotations: {}
-  
-  # Existing PVC (if you want to use an existing volume)
-  existingClaim: ""
+  # Cardano ledger storage
+  ledger:
+    enabled: true
+    storageClass: ""  # Use default storage class if empty
+    accessMode: ReadWriteOnce
+    size: 200Gi  # Increase for mainnet (400Gi+ recommended)
+    annotations: {}
+    
+    # Existing PVC (if you want to use an existing volume)
+    existingClaim: ""
+  # Optional: create a PVC for the IPC socket if needed by
+  # external applications not part of this release
+  socket:
+    enabled: false # default: disabled; use emptyDir instead
+    storageClass: ""  # Use default storage class if empty
+    accessMode: ReadWriteOnce
+    size: 10Mi
+    annotations: {}
+    
+    # Existing PVC (if you want to use an existing volume)
+    existingClaim: ""
 
 # ===========================================
 # RESOURCE CONFIGURATION
