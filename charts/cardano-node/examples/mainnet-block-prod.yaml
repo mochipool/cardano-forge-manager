@@ -105,12 +105,15 @@ forgeManager:
 # STORAGE CONFIGURATION
 # ===========================================
 persistence:
-  enabled: true
-  size: 400Gi  # Mainnet requires substantial storage
-  # storageClass: "fast-ssd"  # Use high-performance storage class for production
-  annotations:
-    # Example for AWS EBS volume encryption
-    # ebs.csi.aws.com/encrypted: "true"
+  ledger:
+    enabled: true
+    size: 400Gi  # Mainnet requires substantial storage
+    # storageClass: "fast-ssd"  # Use high-performance storage class for production
+    annotations:
+      # Example for AWS EBS volume encryption
+      # ebs.csi.aws.com/encrypted: "true"
+  socket:
+    enabled: false
 
 # ===========================================
 # RESOURCE CONFIGURATION (Production)

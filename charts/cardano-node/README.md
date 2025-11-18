@@ -190,9 +190,10 @@ forgeManager:
 
 ```yaml
 persistence:
-  enabled: true
-  size: 400Gi                  # Mainnet requires ~350GB+
-  storageClass: "fast-ssd"     # Use fast storage for best performance
+  ledger:
+      enabled: true
+      size: 400Gi                  # Mainnet requires ~350GB+
+      storageClass: "fast-ssd"     # Use fast storage for best performance
 ```
 
 #### Resource Configuration

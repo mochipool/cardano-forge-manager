@@ -91,9 +91,12 @@ forgeManager:
 # STORAGE CONFIGURATION
 # ===========================================
 persistence:
-  enabled: true
-  size: 25Gi  # Preview network requires less storage
-  # storageClass: ""  # Use default storage class
+  ledger:
+    enabled: true
+    size: 25Gi  # Preview network requires less storage
+    # storageClass: ""  # Use default storage class
+  socket:
+    enabled: false
 
 # ===========================================
 # RESOURCE CONFIGURATION
