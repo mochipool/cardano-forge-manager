@@ -10,12 +10,6 @@ on:
       - '**.md'
   pull_request:
     branches: [ main ]
-    paths:
-      - 'src/**'
-      - 'Dockerfile'
-      - 'requirements.txt'
-      - '.github/workflows/build.yml'
-      - '.github/workflows/build-simple.yml'
     paths-ignore:
       - 'charts/**'
       - 'docs/**'
