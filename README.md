@@ -190,8 +190,10 @@ graph TB
 ### 1. Install CRDs
 
 ```bash
+helm repo add mochipool-helm-charts https://mochipool.github.io/helm-charts
+
 # Install Custom Resource Definitions
-helm install cardano-forge-crds ./charts/cardano-forge-crds \
+helm install cardano-forge-crds mochipool-helm-charts/cardano-forge-crds \
   --namespace cardano-system \
   --create-namespace
 
@@ -609,7 +611,7 @@ python src/forgemanager.py
 - **[Operations Guide](docs/OPERATIONS.md)** - Deployment and operational procedures
 - **[Implementation Notes](docs/IMPLEMENTATION_NOTES.md)** - Technical implementation details
 - **[System Design](docs/SYSTEM_DESIGN.md)** - System design, testing, and validation
-- **[Helm Chart Documentation](charts/cardano-forge-crds/README.md)** - CRD installation and configuration
+- **[Helm Chart Documentation](https://github.com/mochipool/helm-charts)** - CRD installation and configuration
 
 ## 🤝 Contributing
 
